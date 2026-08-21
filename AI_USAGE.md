@@ -8,11 +8,10 @@ This project uses AI tools as assistants. The team remains responsible for the c
 
 Used for:
 
-- Brainstorming and comparing possible project directions
 - Interpreting the competition rules and judging criteria
 - Discussing feasibility, scope, risks, and 36-hour MVP planning
 - Explaining computer-vision concepts and public documentation
-- Reviewing ideas and identifying possible technical or originality problems
+- Identifying possible technical or originality problems
 - Drafting prompts and documentation
 
 ### OpenAI Codex
@@ -46,4 +45,4 @@ This document will be updated as AI tools are used during development.
 
 | Date | Tool | Purpose | Team review or modification |
 | --- | --- | --- | --- |
-| 2026-08-21 | ChatGPT | Brainstorming, rule interpretation, feasibility discussion, and repository setup guidance | The team evaluated the suggestions and retained control of project decisions |
+| 2026-08-21 | ChatGPT | Rule interpretation, feasibility evaluation, and repository setup guidance | The team reviewed the information and retained control of all project decisions |
