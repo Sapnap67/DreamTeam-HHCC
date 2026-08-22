@@ -1,5 +1,11 @@
 from __future__ import annotations
 
+"""Optional MediaPipe pedestrian observations.
+
+This module reports only visible pose/motion proxies. It never changes the
+YOLO warning state and never infers awareness, intention, gaze, or safety.
+"""
+
 import time
 from collections import deque
 from pathlib import Path
@@ -9,6 +15,8 @@ import cv2
 import numpy as np
 
 
+# 1. CONSERVATIVE POSE THRESHOLDS
+# Motion is normalized to the selected person's detected size where possible.
 POSE_VISIBILITY_THRESHOLD = 0.45
 POSE_CROP_PADDING_RATIO = 0.15
 POSE_MAX_INPUT_SIDE = 384
@@ -19,6 +27,7 @@ HEAD_PROXY_DEADBAND = 0.055
 
 
 def unavailable_observation(message: str = "MediaPipe pose module unavailable") -> dict[str, Any]:
+    """Return an honest fallback while the main YOLO pipeline continues."""
     return {
         "available": False,
         "pose_detected": False,
@@ -35,7 +44,7 @@ def unavailable_observation(message: str = "MediaPipe pose module unavailable") 
 
 
 class PoseBehaviorAnalyzer:
-    """Optional, display-only MediaPipe cues; never a risk-state authority."""
+    """Manage MediaPipe and produce display-only pedestrian cues."""
 
     def __init__(self, model_path: Path) -> None:
         self.model_path = Path(model_path)
@@ -46,6 +55,7 @@ class PoseBehaviorAnalyzer:
         self.last_timestamp_ms = -1
 
     def start(self) -> None:
+        """Load the optional pose model; failure becomes a non-fatal fallback."""
         if self.landmarker is not None:
             return
         try:
@@ -87,6 +97,7 @@ class PoseBehaviorAnalyzer:
 
     @staticmethod
     def classify_activity(samples: list[tuple[float, float, float]]) -> tuple[str, str]:
+        """Estimate coarse walking/standing from several normalized samples."""
         if len(samples) < 4:
             return "MOTION UNCERTAIN", "LOW"
         movements = []
@@ -104,6 +115,7 @@ class PoseBehaviorAnalyzer:
 
     @staticmethod
     def classify_orientation(nose_x: float, left_ear_x: float, right_ear_x: float, vehicle_direction: float) -> tuple[str, str]:
+        """Return a low-confidence head proxy, never gaze or awareness."""
         ear_midpoint = (left_ear_x + right_ear_x) * 0.5
         nose_offset = nose_x - ear_midpoint
         if abs(nose_offset) < HEAD_PROXY_DEADBAND or vehicle_direction == 0:
@@ -122,6 +134,7 @@ class PoseBehaviorAnalyzer:
         heavy_vehicle: dict[str, Any] | None,
         timestamp_ms: int,
     ) -> dict[str, Any]:
+        """Crop one YOLO person, run pose inference, and summarize cues."""
         started = time.perf_counter()
         self.start()
         if not self.available or self.landmarker is None:
