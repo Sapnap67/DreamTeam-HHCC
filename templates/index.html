@@ -189,6 +189,7 @@
       let previousState = "MONITORING";
       let audioContext = null;
       let editableZones = null;
+      let calibrationReady = false;
 
       input.addEventListener("change", () => {
         fileName.textContent = input.files.length ? input.files[0].name : "Choose an MP4 video";
@@ -273,7 +274,7 @@
       }
 
       function renderCalibrationOverlay() {
-        if (!editableZones || zoneMode.value !== "fixed") {
+        if (!calibrationReady || !editableZones || zoneMode.value !== "fixed") {
           calibrationOverlay.innerHTML = "";
           return;
         }
@@ -289,7 +290,7 @@
       }
 
       videoShell.addEventListener("click", event => {
-        if (zoneMode.value !== "fixed" || !editableZones) return;
+        if (!calibrationReady || zoneMode.value !== "fixed" || !editableZones) return;
         const frame = displayedFrameRect();
         const localX = event.clientX - frame.shell.left - frame.left;
         const localY = event.clientY - frame.shell.top - frame.top;
@@ -420,18 +421,21 @@
         vehiclesValue.textContent = (context.vehicles || []).join(", ") || "None detected";
         controlsValue.textContent = (context.traffic_controls || []).join(", ") || "None detected";
         const movingMode = data.zone_mode === "moving";
-        fixedCalibration.hidden = movingMode;
-        videoShell.classList.toggle("calibration-active", !movingMode);
+        calibrationReady = Boolean(data.source_name);
+        fixedCalibration.hidden = movingMode || !calibrationReady;
+        videoShell.classList.toggle("calibration-active", !movingMode && calibrationReady);
         blindSide.disabled = !movingMode;
         resetTrackingButton.disabled = !movingMode;
         modeExplanation.textContent = movingMode
           ? "Demonstration geometry — not calibrated intersection zones. Zones follow a real detected truck in moving-camera footage."
-          : "Click each zone's corners on the video, then save. Fixed polygons are stored in zones.json for this camera view.";
+          : calibrationReady
+            ? "Click each zone's corners on the video, then save. Fixed polygons are stored in zones.json for this camera view."
+            : "Upload and start a representative fixed-camera clip before drawing calibration zones.";
         if (!movingMode && editableZones === null) {
           editableZones = cloneZones(data.fixed_zones || {});
           renderCalibrationOverlay();
         }
-        if (movingMode) renderCalibrationOverlay();
+        renderCalibrationOverlay();
         if (data.state === "DANGER" && previousState !== "DANGER") warningTone();
         if (data.error) message.textContent = data.error;
         renderDetections(data.detections || []);
