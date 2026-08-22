@@ -33,10 +33,22 @@ if errorlevel 1 goto setup_failed
 if errorlevel 1 goto setup_failed
 
 :environment_ready
+"%PYTHON_EXE%" -c "import mediapipe" >nul 2>nul
+if errorlevel 1 (
+    echo Installing the optional MediaPipe pose dependency...
+    "%PYTHON_EXE%" -m pip install -r requirements.txt
+    if errorlevel 1 echo MediaPipe setup failed. YOLO monitoring will still run without pose cues.
+)
+
 if not exist "yolo11n.pt" (
     echo The YOLO model file yolo11n.pt is missing from this folder.
     pause
     exit /b 1
+)
+
+if not exist "models\pose_landmarker_lite.task" (
+    echo MediaPipe pose model is not installed. YOLO monitoring will remain active.
+    echo To enable pose observations, run download_pose_model.bat once.
 )
 
 set "YOLO_CONFIG_DIR=%CD%\.runtime\ultralytics"
