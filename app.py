@@ -1,5 +1,11 @@
 from __future__ import annotations
 
+"""BlindSpot Guardian backend.
+
+Roadshow map: accept video, run YOLO, track objects, evaluate image-space
+risk, optionally add display-only MediaPipe cues, and serve results to the UI.
+"""
+
 import atexit
 import importlib.util
 import json
@@ -21,6 +27,8 @@ from werkzeug.utils import secure_filename
 from behavior import PoseBehaviorAnalyzer, unavailable_observation
 
 
+# 1. PROJECT PATHS AND SUPPORTED INPUTS
+# Paths locate local models/uploads; class IDs select relevant YOLO detections.
 BASE_DIR = Path(__file__).resolve().parent
 INPUT_DIR = BASE_DIR / "input"
 OUTPUT_DIR = BASE_DIR / "output"
@@ -36,7 +44,8 @@ YOLO_TRACKING_AVAILABLE = importlib.util.find_spec("lap") is not None
 POSE_ANALYSIS_INTERVAL_FRAMES = 3
 POSE_RESULT_RETENTION_FRAMES = 5
 
-# Image-space motion tracking and risk configuration.
+# 2. TRACKING AND RISK CONFIGURATION
+# Thresholds are image-space values, not metres. Persistence reduces flicker.
 POSITION_SMOOTHING_ALPHA = 0.35
 TRACK_HISTORY_LENGTH = 8
 MIN_MOTION_HISTORY = 4
@@ -53,13 +62,20 @@ MIN_CLOSE_DISTANCE = 0.07
 CLOSE_DISTANCE_TRUCK_WIDTH = 0.85
 CAUTION_DISTANCE_HEAVY_WIDTH = 1.40
 EXTREME_DISTANCE_HEAVY_WIDTH = 0.60
+CAUTION_DISTANCE_VEHICLE_WIDTH = 1.60
+DANGER_DISTANCE_VEHICLE_WIDTH = 0.62
+MIN_PAIR_CAUTION_DISTANCE = 0.075
+MIN_PAIR_DANGER_DISTANCE = 0.040
 DISTANCE_CLOSING_EPSILON = 0.0025
 PATH_LOOKAHEAD_FRAMES = 8.0
 PATH_CONVERGENCE_GAIN = 0.012
+SHORT_TTC_FRAMES = 12.0
+PAIR_SAFETY_MARGIN_WIDTH = 0.20
+PAIR_SAFETY_MARGIN_HEIGHT = 0.12
 DANGER_REQUIRED_FRAMES = 4
-DANGER_CLEAR_FRAMES = 6
+DANGER_CLEAR_FRAMES = 8
 CAUTION_REQUIRED_FRAMES = 2
-CAUTION_CLEAR_FRAMES = 3
+CAUTION_CLEAR_FRAMES = 6
 CLASS_COLORS = {
     "person": (86, 220, 255),
     "bicycle": (102, 236, 161),
@@ -69,6 +85,7 @@ CLASS_COLORS = {
     "bus": (255, 151, 55),
 }
 
+# 3. FLASK APPLICATION AND TEMPORARY WORKING DIRECTORIES
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = MAX_UPLOAD_BYTES
 INPUT_DIR.mkdir(exist_ok=True)
@@ -76,6 +93,7 @@ OUTPUT_DIR.mkdir(exist_ok=True)
 
 
 def blank_frame(message: str = "Upload a video to begin real YOLO processing") -> bytes:
+    """Build the placeholder JPEG displayed before processing begins."""
     canvas = np.full((720, 1280, 3), (13, 19, 25), dtype=np.uint8)
     cv2.rectangle(canvas, (38, 38), (1242, 682), (35, 47, 57), 2)
     cv2.putText(canvas, "BLINDSPOT GUARDIAN", (78, 302), cv2.FONT_HERSHEY_DUPLEX, 1.2, (90, 222, 184), 2)
@@ -85,6 +103,8 @@ def blank_frame(message: str = "Upload a video to begin real YOLO processing") -
 
 
 class DetectionEngine:
+    """Stateful one-video pipeline shared by the worker thread and Flask API."""
+
     def __init__(self) -> None:
         self.lock = threading.RLock()
         self.frame_ready = threading.Condition(self.lock)
@@ -122,6 +142,8 @@ class DetectionEngine:
         self.latest_sound_event: dict[str, Any] | None = None
         self.status: dict[str, Any] = self._initial_status()
 
+    # 4. STATUS, EVIDENCE, TIMELINE, AND SOUND STATE
+    # These helpers create safe defaults and snapshots for /api/status.
     @staticmethod
     def _initial_status() -> dict[str, Any]:
         return {
@@ -162,6 +184,7 @@ class DetectionEngine:
     def _empty_evidence() -> dict[str, Any]:
         return {
             "heavy_vehicle_detected": False,
+            "vehicle_detected": False,
             "vulnerable_road_user_detected": False,
             "road_user_on_monitored_side": False,
             "road_user_within_caution_distance": False,
@@ -177,6 +200,12 @@ class DetectionEngine:
             "danger_required_frames": DANGER_REQUIRED_FRAMES,
             "road_user_class": None,
             "road_user_track_key": None,
+            "vehicle_class": None,
+            "vehicle_confidence": None,
+            "vehicle_track_key": None,
+            "risk_pair_key": None,
+            "estimated_ttc_frames": None,
+            "short_time_to_collision": False,
         }
 
     def snapshot(self) -> dict[str, Any]:
@@ -249,7 +278,7 @@ class DetectionEngine:
                 continue
             if item["class"] in {"truck", "bus"}:
                 self.observed_heavy_vehicle_keys.add(key)
-            elif item["class"] in {"person", "bicycle", "motorcycle"}:
+            elif item["class"] in {"person", "bicycle"}:
                 self.observed_vulnerable_road_user_keys.add(key)
 
     def _record_transition_event(
@@ -284,8 +313,12 @@ class DetectionEngine:
                 "timestamp_seconds": round(max(0.0, timestamp_seconds), 3),
                 "state": state,
                 "reason": reason,
-                "heavy_vehicle_class": primary["class"] if primary is not None else self.last_primary_class,
-                "heavy_vehicle_confidence": (
+                "vehicle_class": evidence.get("vehicle_class") or (primary["class"] if primary is not None else self.last_primary_class),
+                "vehicle_confidence": evidence.get("vehicle_confidence") or (
+                    round(float(primary["confidence"]), 3) if primary is not None else self.last_primary_confidence
+                ),
+                "heavy_vehicle_class": evidence.get("vehicle_class") or (primary["class"] if primary is not None else self.last_primary_class),
+                "heavy_vehicle_confidence": evidence.get("vehicle_confidence") or (
                     round(float(primary["confidence"]), 3) if primary is not None else self.last_primary_confidence
                 ),
                 "road_user_class": evidence.get("road_user_class"),
@@ -295,6 +328,7 @@ class DetectionEngine:
             }
         )
 
+    # 5. SESSION CONTROLS AND MODEL LIFECYCLE
     def update_settings(self, payload: dict[str, Any]) -> tuple[bool, str]:
         with self.lock:
             blind_side = payload.get("blind_side", self.blind_side)
@@ -364,13 +398,16 @@ class DetectionEngine:
             self.model = YOLO(str(MODEL_PATH))
         return self.model
 
+    # 6. MAIN LOOP: frame -> YOLO -> tracking -> risk -> pose -> UI output.
     def _process_video(self) -> None:
+        """Process frames in the background until EOF or a stop request."""
         capture: cv2.VideoCapture | None = None
         danger_frames = 0
         caution_frames = 0
         safe_frames = 0
         visible_state = "MONITORING"
         visible_reason = "No meaningful risk evidence"
+        persistence_pair_key: str | None = None
         previous_frame_time: float | None = None
         fps_ema = 0.0
         try:
@@ -429,42 +466,33 @@ class DetectionEngine:
                     detections, primary_truck, frame.shape[1], frame.shape[0], blind_side
                 )
 
-                previous_visible_state = visible_state
-                if raw_state == "DANGER":
-                    danger_frames += 1
-                    caution_frames += 1
-                    safe_frames = 0
-                    if danger_frames >= DANGER_REQUIRED_FRAMES:
-                        visible_state = "DANGER"
-                        visible_reason = raw_reason
-                    elif visible_state != "DANGER" and caution_frames >= CAUTION_REQUIRED_FRAMES:
-                        visible_state = "CAUTION"
-                        visible_reason = raw_reason
-                elif raw_state == "CAUTION":
-                    danger_frames = 0
-                    caution_frames += 1
-                    if visible_state == "DANGER":
-                        safe_frames += 1
-                        if safe_frames >= DANGER_CLEAR_FRAMES:
-                            visible_state = "CAUTION"
-                            visible_reason = raw_reason
-                            safe_frames = 0
-                    elif caution_frames >= CAUTION_REQUIRED_FRAMES:
-                        visible_state = "CAUTION"
-                        visible_reason = raw_reason
-                else:
+                # Warning persistence belongs to one real vehicle–road-user pair.
+                # A different pair must build its own consecutive-frame evidence.
+                raw_pair_key = raw_evidence.get("risk_pair_key")
+                if raw_state in {"CAUTION", "DANGER"} and raw_pair_key != persistence_pair_key:
                     danger_frames = 0
                     caution_frames = 0
-                    if visible_state in {"DANGER", "CAUTION"}:
-                        safe_frames += 1
-                        clear_frames = DANGER_CLEAR_FRAMES if visible_state == "DANGER" else CAUTION_CLEAR_FRAMES
-                        if safe_frames >= clear_frames:
-                            visible_state = raw_state
-                            visible_reason = raw_reason
-                            safe_frames = 0
-                    else:
-                        visible_state = raw_state
-                        visible_reason = raw_reason
+                    safe_frames = 0
+                    persistence_pair_key = raw_pair_key
+
+                previous_visible_state = visible_state
+                (
+                    visible_state,
+                    visible_reason,
+                    danger_frames,
+                    caution_frames,
+                    safe_frames,
+                ) = self._apply_warning_hysteresis(
+                    raw_state,
+                    raw_reason,
+                    visible_state,
+                    visible_reason,
+                    danger_frames,
+                    caution_frames,
+                    safe_frames,
+                )
+                if raw_state not in {"CAUTION", "DANGER"} and visible_state not in {"CAUTION", "DANGER"}:
+                    persistence_pair_key = None
 
                 raw_evidence["risk_sustained_frames"] = danger_frames
                 raw_evidence["risk_sustained"] = visible_state == "DANGER"
@@ -480,8 +508,12 @@ class DetectionEngine:
                 )
                 self._update_sound_event(previous_visible_state, visible_state)
                 selected_person = self._select_pose_person(detections, primary_truck, raw_evidence)
+                risk_vehicle = next(
+                    (item for item in detections if item.get("motion_track_key") == raw_evidence.get("vehicle_track_key")),
+                    primary_truck,
+                )
                 pose_observation = self._update_pose_observation(
-                    frame, selected_person, primary_truck, source_timestamp_seconds
+                    frame, selected_person, risk_vehicle, source_timestamp_seconds
                 )
 
                 annotated = self._draw_frame(
@@ -550,6 +582,7 @@ class DetectionEngine:
                 except OSError:
                     pass
 
+    # 7. YOLO OUTPUT CONVERSION AND FRAME-TO-FRAME TRACKING
     @staticmethod
     def _extract_detections(result: Any, width: int, height: int) -> list[dict[str, Any]]:
         detections: list[dict[str, Any]] = []
@@ -660,6 +693,7 @@ class DetectionEngine:
         span = max(newest_frame - oldest_frame, 1)
         return (newest - oldest) / span, len(track["history"])
 
+    # 8. PRIMARY HEAVY VEHICLE: retain one bus/truck identity across frames.
     def _update_primary_heavy_vehicle(
         self,
         detections: list[dict[str, Any]],
@@ -713,6 +747,9 @@ class DetectionEngine:
             },
         )
 
+    # 9. EXPLAINABLE ALL-VEHICLE PAIRWISE RISK HEURISTIC
+    # Every tracked vehicle is compared with every tracked person/bicycle. The
+    # strongest supported pair becomes the sole warning candidate for the frame.
     def _evaluate_risk(
         self,
         detections: list[dict[str, Any]],
@@ -721,105 +758,174 @@ class DetectionEngine:
         height: int,
         blind_side: str,
     ) -> tuple[str, str, dict[str, Any]]:
-        evidence = self._empty_evidence()
-        if primary_truck is None or self.smoothed_truck_box is None:
-            return "MONITORING", "Waiting for a real heavy-vehicle detection", evidence
+        vehicles = [item for item in detections if item["class"] in {"car", "motorcycle", "bus", "truck"}]
+        road_users = [item for item in detections if item["class"] in {"person", "bicycle"}]
+        base_evidence = self._empty_evidence()
+        base_evidence["vehicle_detected"] = bool(vehicles)
+        base_evidence["heavy_vehicle_detected"] = any(item["class"] in {"bus", "truck"} for item in vehicles)
+        base_evidence["vulnerable_road_user_detected"] = bool(road_users)
+        if not vehicles:
+            return "MONITORING", "Waiting for a real vehicle detection", base_evidence
+        if not road_users:
+            return "VEHICLE TRACKED", "Vehicle tracked; no person or bicycle detected", base_evidence
 
-        evidence["heavy_vehicle_detected"] = True
+        candidates: list[tuple[float, str, str, dict[str, Any]]] = []
+        for vehicle in vehicles:
+            for road_user in road_users:
+                candidates.append(self._evaluate_risk_pair(vehicle, road_user, width, height, blind_side, base_evidence))
 
-        truck_motion, truck_history = self._motion(primary_truck)
-        truck_contact = np.asarray(primary_truck.get("smoothed_contact", primary_truck["contact"]), dtype=np.float32)
-        tx1, ty1, tx2, ty2 = [float(value) for value in self.smoothed_truck_box]
-        truck_width = max(tx2 - tx1, 1.0)
-        truck_height = max(ty2 - ty1, 1.0)
-        if blind_side == "right":
-            margin_x1 = tx1 - TRUCK_REAR_MARGIN_WIDTH * truck_width
-            margin_x2 = tx2 + TRUCK_BLIND_MARGIN_WIDTH * truck_width
-        else:
-            margin_x1 = tx1 - TRUCK_BLIND_MARGIN_WIDTH * truck_width
-            margin_x2 = tx2 + TRUCK_REAR_MARGIN_WIDTH * truck_width
-        margin_y1 = ty1 + TRUCK_LOWER_START * truck_height
-        margin_y2 = ty2 + TRUCK_MARGIN_DEPTH_HEIGHT * truck_height
+        # Severity dominates score: every DANGER outranks every CAUTION, while
+        # distance, TTC, overlap, and convergence rank pairs within a state.
+        score, state, reason, evidence = max(candidates, key=lambda candidate: candidate[0])
+        if state == "MONITORING":
+            return "VEHICLE TRACKED", "Vehicles tracked; no converging vulnerable road user", evidence
+        return state, reason, evidence
 
-        best_state = "VEHICLE TRACKED"
-        best_reason = f"{primary_truck['class'].capitalize()} tracked; no vulnerable road user nearby"
-        road_users = [
-            item for item in detections
-            if item is not primary_truck and item["class"] in {"person", "bicycle", "motorcycle"}
-        ]
-        evidence["vulnerable_road_user_detected"] = bool(road_users)
-        closest_distance = float("inf")
-        for item in road_users:
-            road_motion, road_history = self._motion(item)
-            road_contact = np.asarray(item.get("smoothed_contact", item["contact"]), dtype=np.float32)
-            relative = road_contact - truck_contact
-            distance = float(np.linalg.norm(relative))
-            close_limit = max(MIN_CLOSE_DISTANCE, CLOSE_DISTANCE_TRUCK_WIDTH * truck_width / width)
-            close = distance <= close_limit
-            caution_limit = CAUTION_DISTANCE_HEAVY_WIDTH * truck_width / width
-            within_caution_distance = distance <= caution_limit
-            extremely_close = distance <= EXTREME_DISTANCE_HEAVY_WIDTH * truck_width / width
+    def _evaluate_risk_pair(
+        self,
+        vehicle: dict[str, Any],
+        road_user: dict[str, Any],
+        width: int,
+        height: int,
+        blind_side: str,
+        base_evidence: dict[str, Any] | None = None,
+    ) -> tuple[float, str, str, dict[str, Any]]:
+        """Score one real tracked vehicle–road-user pair in image space."""
+        evidence = dict(base_evidence or self._empty_evidence())
+        vehicle_contact = np.asarray(vehicle.get("smoothed_contact", vehicle["contact"]), dtype=np.float32)
+        user_contact = np.asarray(road_user.get("smoothed_contact", road_user["contact"]), dtype=np.float32)
+        relative = user_contact - vehicle_contact
+        distance = float(np.linalg.norm(relative))
+        vehicle_motion, vehicle_history = self._motion(vehicle)
+        user_motion, user_history = self._motion(road_user)
+        enough_history = vehicle_history >= MIN_MOTION_HISTORY and user_history >= MIN_MOTION_HISTORY
 
-            rx1, ry1, rx2, ry2 = [float(value) for value in item["box"]]
-            road_margin_x = ROAD_USER_MARGIN_RATIO * max(rx2 - rx1, 1.0)
-            road_margin_y = ROAD_USER_MARGIN_RATIO * max(ry2 - ry1, 1.0)
-            expanded_overlap = not (
-                rx2 + road_margin_x < margin_x1 or rx1 - road_margin_x > margin_x2
-                or ry2 + road_margin_y < margin_y1 or ry1 - road_margin_y > margin_y2
-            )
-            on_selected_side = (
-                road_contact[0] >= tx2 / width if blind_side == "right" else road_contact[0] <= tx1 / width
-            )
-            beside_or_ahead = on_selected_side and (ty1 + 0.20 * truck_height) / height <= road_contact[1] <= margin_y2 / height
+        vx1, vy1, vx2, vy2 = [float(value) for value in vehicle["box"]]
+        ux1, uy1, ux2, uy2 = [float(value) for value in road_user["box"]]
+        vehicle_width = max(vx2 - vx1, 1.0)
+        vehicle_height = max(vy2 - vy1, 1.0)
+        caution_limit = max(MIN_PAIR_CAUTION_DISTANCE, CAUTION_DISTANCE_VEHICLE_WIDTH * vehicle_width / width)
+        danger_limit = max(MIN_PAIR_DANGER_DISTANCE, DANGER_DISTANCE_VEHICLE_WIDTH * vehicle_width / width)
+        within_caution = distance <= caution_limit
+        within_danger = distance <= danger_limit
 
-            enough_history = truck_history >= MIN_MOTION_HISTORY and road_history >= MIN_MOTION_HISTORY
-            item_evidence = {
-                **evidence,
+        margin_x = PAIR_SAFETY_MARGIN_WIDTH * vehicle_width
+        margin_y = PAIR_SAFETY_MARGIN_HEIGHT * vehicle_height
+        user_margin_x = ROAD_USER_MARGIN_RATIO * max(ux2 - ux1, 1.0)
+        user_margin_y = ROAD_USER_MARGIN_RATIO * max(uy2 - uy1, 1.0)
+        expanded_overlap = not (
+            ux2 + user_margin_x < vx1 - margin_x
+            or ux1 - user_margin_x > vx2 + margin_x
+            or uy2 + user_margin_y < vy1 - margin_y
+            or uy1 - user_margin_y > vy2 + margin_y
+        )
+        on_selected_side = user_contact[0] >= vehicle_contact[0] if blind_side == "right" else user_contact[0] <= vehicle_contact[0]
+
+        decreasing = False
+        paths_converging = False
+        closing_rate = 0.0
+        ttc_frames: float | None = None
+        if enough_history:
+            relative_motion = user_motion - vehicle_motion
+            closing_rate = -float(np.dot(relative, relative_motion)) / max(distance, 1e-6)
+            decreasing = closing_rate > DISTANCE_CLOSING_EPSILON
+            projected_distance = float(np.linalg.norm(relative + relative_motion * PATH_LOOKAHEAD_FRAMES))
+            paths_converging = projected_distance + PATH_CONVERGENCE_GAIN < distance
+            if decreasing:
+                ttc_frames = distance / max(closing_rate, 1e-6)
+        short_ttc = ttc_frames is not None and 0.0 < ttc_frames <= SHORT_TTC_FRAMES
+        confidence_supported = min(float(vehicle["confidence"]), float(road_user["confidence"])) >= 0.40
+        pair_key = f"{vehicle.get('motion_track_key', vehicle['class'])}|{road_user.get('motion_track_key', road_user['class'])}"
+        evidence.update(
+            {
+                "vehicle_detected": True,
+                "heavy_vehicle_detected": vehicle["class"] in {"bus", "truck"},
+                "vulnerable_road_user_detected": True,
                 "road_user_on_monitored_side": bool(on_selected_side),
-                "road_user_within_caution_distance": bool(within_caution_distance),
+                "road_user_within_caution_distance": bool(within_caution),
+                "distance_decreasing": bool(decreasing),
+                "motion_paths_converging": bool(paths_converging),
                 "expanded_margin_overlap": bool(expanded_overlap),
                 "motion_history_ready": bool(enough_history),
-                "road_user_class": item["class"],
-                "road_user_track_key": item.get("motion_track_key"),
+                "short_time_to_collision": bool(short_ttc),
+                "estimated_ttc_frames": round(ttc_frames, 1) if ttc_frames is not None else None,
+                "vehicle_class": vehicle["class"],
+                "vehicle_confidence": round(float(vehicle["confidence"]), 3),
+                "vehicle_track_key": vehicle.get("motion_track_key"),
+                "road_user_class": road_user["class"],
+                "road_user_track_key": road_user.get("motion_track_key"),
+                "risk_pair_key": pair_key,
             }
-            if distance < closest_distance:
-                closest_distance = distance
-                evidence = item_evidence
-            decreasing = False
-            paths_converging = False
-            if enough_history:
-                relative_motion = road_motion - truck_motion
-                closing_rate = -float(np.dot(relative, relative_motion)) / max(distance, 1e-6)
-                decreasing = closing_rate > DISTANCE_CLOSING_EPSILON
-                projected_relative = relative + relative_motion * PATH_LOOKAHEAD_FRAMES
-                projected_distance = float(np.linalg.norm(projected_relative))
-                paths_converging = projected_distance + PATH_CONVERGENCE_GAIN < distance
-            confidence_supported = min(float(primary_truck["confidence"]), float(item["confidence"])) >= 0.40
-            item_evidence["distance_decreasing"] = bool(decreasing)
-            item_evidence["motion_paths_converging"] = bool(paths_converging)
-            label = item["class"].capitalize()
+        )
 
-            caution_evidence = on_selected_side and within_caution_distance and confidence_supported
-            stronger_evidence = decreasing or expanded_overlap or paths_converging or extremely_close
-            danger_evidence = caution_evidence and stronger_evidence
-            if danger_evidence:
-                if paths_converging:
-                    return "DANGER", f"{label} and heavy-vehicle paths converging", item_evidence
-                if expanded_overlap:
-                    return "DANGER", f"{label} overlapping the heavy vehicle's safety margin", item_evidence
-                if decreasing:
-                    return "DANGER", f"{label} closing on the heavy vehicle", item_evidence
-                return "DANGER", f"{label} remaining extremely close to the heavy vehicle", item_evidence
-            if caution_evidence and best_state != "CAUTION":
-                best_state = "CAUTION"
-                evidence = item_evidence
-                best_reason = (
-                    f"{label} near the heavy vehicle on the monitored side"
-                    if on_selected_side and decreasing
-                    else f"{label} within caution distance on the monitored side"
-                )
-        return best_state, best_reason, evidence
+        vehicle_label = vehicle["class"].capitalize()
+        user_label = "pedestrian" if road_user["class"] == "person" else "cyclist"
+        approaching = enough_history and confidence_supported and within_caution and (decreasing or paths_converging)
+        danger_supported = approaching and (
+            short_ttc
+            or (paths_converging and within_danger)
+            or (expanded_overlap and decreasing)
+        )
+        proximity_score = max(0.0, 1.0 - distance / max(caution_limit, 1e-6))
+        evidence_score = 18.0 * proximity_score + 8.0 * decreasing + 10.0 * paths_converging + 12.0 * expanded_overlap + 14.0 * short_ttc
+        if danger_supported:
+            if short_ttc:
+                reason = f"{vehicle_label} and {user_label} have a short image-space time-to-collision"
+            elif paths_converging:
+                reason = f"{vehicle_label} and {user_label} paths are strongly converging"
+            else:
+                reason = f"{vehicle_label}–{user_label} distance is rapidly decreasing"
+            return 200.0 + evidence_score, "DANGER", reason, evidence
+        if approaching:
+            reason = (
+                f"{vehicle_label} and {user_label} paths are converging"
+                if paths_converging
+                else f"{vehicle_label} approaching {user_label}"
+            )
+            return 100.0 + evidence_score, "CAUTION", reason, evidence
+        return evidence_score, "MONITORING", f"{vehicle_label} and {user_label} are not on a supported collision path", evidence
 
+    @staticmethod
+    def _apply_warning_hysteresis(
+        raw_state: str,
+        raw_reason: str,
+        visible_state: str,
+        visible_reason: str,
+        danger_frames: int,
+        caution_frames: int,
+        safe_frames: int,
+    ) -> tuple[str, str, int, int, int]:
+        """Require sustained risk and sustained clearing to prevent flicker."""
+        if raw_state == "DANGER":
+            danger_frames += 1
+            caution_frames += 1
+            safe_frames = 0
+            if danger_frames >= DANGER_REQUIRED_FRAMES:
+                visible_state, visible_reason = "DANGER", raw_reason
+            elif visible_state != "DANGER" and caution_frames >= CAUTION_REQUIRED_FRAMES:
+                visible_state, visible_reason = "CAUTION", raw_reason
+        elif raw_state == "CAUTION":
+            danger_frames = 0
+            caution_frames += 1
+            if visible_state == "DANGER":
+                safe_frames += 1
+                if safe_frames >= DANGER_CLEAR_FRAMES:
+                    visible_state, visible_reason, safe_frames = "CAUTION", raw_reason, 0
+            elif caution_frames >= CAUTION_REQUIRED_FRAMES:
+                visible_state, visible_reason = "CAUTION", raw_reason
+        else:
+            danger_frames = 0
+            caution_frames = 0
+            if visible_state in {"DANGER", "CAUTION"}:
+                safe_frames += 1
+                clear_frames = DANGER_CLEAR_FRAMES if visible_state == "DANGER" else CAUTION_CLEAR_FRAMES
+                if safe_frames >= clear_frames:
+                    visible_state, visible_reason, safe_frames = raw_state, raw_reason, 0
+            else:
+                visible_state, visible_reason = raw_state, raw_reason
+        return visible_state, visible_reason, danger_frames, caution_frames, safe_frames
+
+    # 10. OPTIONAL MEDIAPIPE: display-only cues for one relevant person.
     def _select_pose_person(
         self,
         detections: list[dict[str, Any]],
@@ -875,6 +981,7 @@ class DetectionEngine:
             self.latest_pose_observation = unavailable_observation("Pose observation expired; waiting for the next sample")
         return dict(self.latest_pose_observation)
 
+    # 11. OUTPUT PRESENTATION: labels, JPEG encoding, and MJPEG streaming.
     @staticmethod
     def _state_label(state: str) -> str:
         return {
@@ -896,7 +1003,12 @@ class DetectionEngine:
             x1, y1, x2, y2 = [round(value) for value in item["box"]]
             color = CLASS_COLORS[item["class"]]
             cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
-            label = f"{item['class']} {item['confidence']:.2f}"
+            vehicle_role = ""
+            if item["class"] in {"truck", "bus"}:
+                vehicle_role = " HEAVY VEHICLE"
+            elif item["class"] in {"car", "motorcycle"}:
+                vehicle_role = " VEHICLE"
+            label = f"{item['class']} {item['confidence']:.2f}{vehicle_role}"
             if item.get("is_primary"):
                 label += " PRIMARY"
                 if item.get("track_id") is not None:
@@ -921,6 +1033,7 @@ class DetectionEngine:
                 yield b"--frame\r\nContent-Type: image/jpeg\r\n\r\n" + frame + b"\r\n"
 
 
+# 12. FLASK ROUTES: browser page, video stream, status, controls, and report.
 engine = DetectionEngine()
 atexit.register(engine.stop, False)
 
