@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import atexit
 import importlib.util
+import json
 import os
 import threading
 import time
 import uuid
 from collections import deque
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -96,6 +98,13 @@ class DetectionEngine:
         self.truck_lost_frames = 0
         self.motion_tracks: dict[str, dict[str, Any]] = {}
         self.next_fallback_track_id = 1
+        self.timeline_events: list[dict[str, Any]] = []
+        self.observed_heavy_vehicle_keys: set[str] = set()
+        self.observed_vulnerable_road_user_keys: set[str] = set()
+        self.session_event_counter = 0
+        self.session_started_at: str | None = None
+        self.last_primary_class: str | None = None
+        self.last_primary_confidence: float | None = None
         self.status: dict[str, Any] = self._initial_status()
 
     @staticmethod
@@ -118,6 +127,18 @@ class DetectionEngine:
                 "lost_frames": 0,
             },
             "evidence": DetectionEngine._empty_evidence(),
+            "timeline": [],
+            "session_summary": DetectionEngine._empty_session_summary(),
+            "session_started_at": None,
+        }
+
+    @staticmethod
+    def _empty_session_summary() -> dict[str, int]:
+        return {
+            "heavy_vehicles_observed": 0,
+            "vulnerable_road_users_observed": 0,
+            "caution_events": 0,
+            "danger_events": 0,
         }
 
     @staticmethod
@@ -143,6 +164,9 @@ class DetectionEngine:
     def snapshot(self) -> dict[str, Any]:
         with self.lock:
             snapshot = dict(self.status)
+            snapshot["timeline"] = [dict(event) for event in self.timeline_events]
+            snapshot["session_summary"] = self._session_summary()
+            snapshot["session_started_at"] = self.session_started_at
             snapshot.update(
                 {
                     "blind_side": self.blind_side,
@@ -150,6 +174,76 @@ class DetectionEngine:
                 }
             )
             return snapshot
+
+    def _reset_session_events(self, started: bool = False) -> None:
+        self.timeline_events.clear()
+        self.observed_heavy_vehicle_keys.clear()
+        self.observed_vulnerable_road_user_keys.clear()
+        self.session_event_counter = 0
+        self.session_started_at = datetime.now(timezone.utc).isoformat() if started else None
+        self.last_primary_class = None
+        self.last_primary_confidence = None
+
+    def _session_summary(self) -> dict[str, int]:
+        return {
+            "heavy_vehicles_observed": len(self.observed_heavy_vehicle_keys),
+            "vulnerable_road_users_observed": len(self.observed_vulnerable_road_user_keys),
+            "caution_events": sum(event["state"] == "CAUTION" for event in self.timeline_events),
+            "danger_events": sum(event["state"] == "DANGER" for event in self.timeline_events),
+        }
+
+    def _update_session_observations(self, detections: list[dict[str, Any]]) -> None:
+        for item in detections:
+            key = item.get("motion_track_key")
+            if not key:
+                continue
+            if item["class"] in {"truck", "bus"}:
+                self.observed_heavy_vehicle_keys.add(key)
+            elif item["class"] in {"person", "bicycle", "motorcycle"}:
+                self.observed_vulnerable_road_user_keys.add(key)
+
+    def _record_transition_event(
+        self,
+        previous_state: str,
+        state: str,
+        timestamp_seconds: float,
+        reason: str,
+        primary: dict[str, Any] | None,
+        evidence: dict[str, Any],
+    ) -> None:
+        safe_states = {"MONITORING", "VEHICLE TRACKED"}
+        meaningful = (
+            previous_state in safe_states and state == "CAUTION"
+            or previous_state == "CAUTION" and state == "DANGER"
+            or previous_state == "DANGER" and state == "CAUTION"
+            or previous_state in {"CAUTION", "DANGER"} and state in safe_states
+        )
+        if not meaningful:
+            return
+        if primary is not None:
+            self.last_primary_class = primary["class"]
+            self.last_primary_confidence = float(primary["confidence"])
+        active_evidence = [
+            key for key, value in evidence.items()
+            if isinstance(value, bool) and value and key not in {"risk_sustained", "motion_history_ready"}
+        ]
+        self.session_event_counter += 1
+        self.timeline_events.append(
+            {
+                "id": f"E{self.session_event_counter:04d}",
+                "timestamp_seconds": round(max(0.0, timestamp_seconds), 3),
+                "state": state,
+                "reason": reason,
+                "heavy_vehicle_class": primary["class"] if primary is not None else self.last_primary_class,
+                "heavy_vehicle_confidence": (
+                    round(float(primary["confidence"]), 3) if primary is not None else self.last_primary_confidence
+                ),
+                "road_user_class": evidence.get("road_user_class"),
+                "active_evidence": active_evidence,
+                "caution_persistence": int(evidence.get("caution_persistence_frames", 0)),
+                "danger_persistence": int(evidence.get("danger_persistence_frames", 0)),
+            }
+        )
 
     def update_settings(self, payload: dict[str, Any]) -> tuple[bool, str]:
         with self.lock:
@@ -189,6 +283,7 @@ class DetectionEngine:
             self.source_path = source_path
             self.frame_number = 0
             self._reset_primary_truck()
+            self._reset_session_events(started=True)
             self._reset_yolo_tracker()
             self.status = self._initial_status()
             self.status.update({"running": True, "source_name": source_name, "action": "Loading YOLO model..."})
@@ -204,6 +299,7 @@ class DetectionEngine:
         with self.lock:
             if reset:
                 self._reset_primary_truck()
+                self._reset_session_events(started=False)
                 self.status = self._initial_status()
                 self.latest_jpeg = blank_frame()
                 self.frame_number += 1
@@ -237,6 +333,7 @@ class DetectionEngine:
                 ok, frame = capture.read()
                 if not ok:
                     break
+                source_timestamp_seconds = capture.get(cv2.CAP_PROP_POS_MSEC) / 1000.0
 
                 inference_start = time.perf_counter()
                 inference_options = {
@@ -268,11 +365,16 @@ class DetectionEngine:
                     blind_side = self.blind_side
 
                 self._update_motion_tracks(detections, frame.shape[1], frame.shape[0])
+                self._update_session_observations(detections)
                 primary_truck, primary_status = self._update_primary_heavy_vehicle(detections)
+                if primary_truck is not None:
+                    self.last_primary_class = primary_truck["class"]
+                    self.last_primary_confidence = float(primary_truck["confidence"])
                 raw_state, raw_reason, raw_evidence = self._evaluate_risk(
                     detections, primary_truck, frame.shape[1], frame.shape[0], blind_side
                 )
 
+                previous_visible_state = visible_state
                 if raw_state == "DANGER":
                     danger_frames += 1
                     caution_frames += 1
@@ -313,6 +415,14 @@ class DetectionEngine:
                 raw_evidence["risk_sustained"] = visible_state == "DANGER"
                 raw_evidence["caution_persistence_frames"] = min(caution_frames, CAUTION_REQUIRED_FRAMES)
                 raw_evidence["danger_persistence_frames"] = min(danger_frames, DANGER_REQUIRED_FRAMES)
+                self._record_transition_event(
+                    previous_visible_state,
+                    visible_state,
+                    source_timestamp_seconds,
+                    visible_reason,
+                    primary_truck,
+                    raw_evidence,
+                )
 
                 annotated = self._draw_frame(
                     frame,
@@ -346,6 +456,9 @@ class DetectionEngine:
                             "error": None,
                             "primary_truck": primary_status,
                             "evidence": raw_evidence,
+                            "timeline": [dict(event) for event in self.timeline_events],
+                            "session_summary": self._session_summary(),
+                            "session_started_at": self.session_started_at,
                         }
                     )
                     self.frame_ready.notify_all()
@@ -707,6 +820,26 @@ def video_feed():
 @app.get("/api/status")
 def api_status():
     return jsonify(engine.snapshot())
+
+
+@app.get("/api/session-report")
+def api_session_report():
+    snapshot = engine.snapshot()
+    summary = snapshot["session_summary"]
+    report = {
+        "project_name": "BlindSpot Guardian",
+        "source_filename": snapshot.get("source_name"),
+        "processing_date_time": snapshot.get("session_started_at"),
+        "total_caution_events": summary["caution_events"],
+        "total_danger_events": summary["danger_events"],
+        "timeline_events": snapshot["timeline"],
+        "disclaimer": "Prototype image-space observations, not verified crash predictions.",
+    }
+    return Response(
+        json.dumps(report, indent=2),
+        mimetype="application/json",
+        headers={"Content-Disposition": "attachment; filename=blindspot-guardian-session-report.json"},
+    )
 
 
 @app.post("/api/settings")
