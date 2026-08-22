@@ -33,4 +33,5 @@ button { border:0;border-radius:9px;min-height:51px;padding:0 17px;color:var(--t
 .evidence-list li.red{color:#ffe0e2;border-color:rgba(255,75,85,.52);background:rgba(255,75,85,.1)}
 .evidence-list li.red i{background:var(--red);box-shadow:0 0 10px var(--red)}
 .detection-row.bus .object-dot{background:#ff9737}
+.pose-card{padding:16px;border-radius:14px}.pose-card h3{margin:4px 0 0;font-size:17px}.pose-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:13px 0 0}.pose-grid div{padding:9px;border:1px solid rgba(255,255,255,.06);border-radius:8px;background:rgba(5,12,15,.32)}.pose-grid dt{color:var(--muted);font-size:8px;font-weight:850;letter-spacing:.06em;text-transform:uppercase}.pose-grid dd{margin:5px 0 0;color:#e7f2ef;font-size:9px;font-weight:800;line-height:1.35}.pose-card>p{margin:11px 0 0;color:var(--muted);font-size:9px;line-height:1.45}
 

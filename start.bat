@@ -33,10 +33,26 @@ if errorlevel 1 goto setup_failed
 if errorlevel 1 goto setup_failed
 
 :environment_ready
+"%PYTHON_EXE%" -c "import cv2, flask, mediapipe, ultralytics" >nul 2>nul
+if errorlevel 1 (
+    echo Installing or updating BlindSpot Guardian dependencies...
+    "%PYTHON_EXE%" -m pip install -r requirements.txt
+    if errorlevel 1 goto setup_failed
+)
+
 if not exist "yolo11n.pt" (
     echo The YOLO model file yolo11n.pt is missing from this folder.
     pause
     exit /b 1
+)
+
+if not exist "models\pose_landmarker_lite.task" (
+    echo Downloading the MediaPipe pose model...
+    if not exist "models" mkdir "models"
+    powershell.exe -NoProfile -Command "Invoke-WebRequest -UseBasicParsing 'https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/latest/pose_landmarker_lite.task' -OutFile 'models\pose_landmarker_lite.task'"
+    if errorlevel 1 (
+        echo Pose model download failed. YOLO warnings will still work without pose cues.
+    )
 )
 
 set "YOLO_CONFIG_DIR=%CD%\.runtime\ultralytics"

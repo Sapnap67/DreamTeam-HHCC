@@ -2,6 +2,15 @@
 
 This file records user-visible and safety-logic changes to the project. Update it whenever the application, detection behavior, zone geometry, warning rules, interface, dependencies, or documentation changes.
 
+## 2026-08-22 — MediaPipe Cues on the Two-Panel Warning App
+
+- Added MediaPipe pose analysis without restoring visible road, sidewalk, or warning-zone polygons.
+- Displays likely walking, standing, or uncertain motion plus a low-confidence head-orientation proxy for a matched person.
+- Explicitly reports that pedestrian awareness cannot be inferred.
+- Keeps the existing YOLO motion/proximity heuristic as the only input to Safe, Caution, and Danger states.
+- Degrades cleanly to YOLO-only operation when the optional pose model is unavailable.
+- Added first-run pose-model download support and unit tests for the conservative behavior labels.
+
 ## 2026-08-22 — Heavy-Vehicle Warning Tuning and Signal Test
 
 ### Changed
