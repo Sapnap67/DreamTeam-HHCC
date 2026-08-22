@@ -1,0 +1,315 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Local prototype for YOLO road-user detection and MediaPipe pedestrian pose cues on uploaded video.">
+  <title>BlindSpot Guardian</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+</head>
+<body>
+  <main>
+    <header class="topbar">
+      <div class="brand">
+        <div class="brand-mark" aria-hidden="true"><span></span></div>
+        <div><h1>BlindSpot Guardian</h1><p>YOLO detection + MediaPipe pose cues</p></div>
+      </div>
+      <div class="prototype-badge">PROTOTYPE — NOT FOR ROAD USE</div>
+    </header>
+
+    <section class="workspace">
+      <div class="video-column">
+        <div class="video-shell" id="videoShell">
+          <img id="videoFeed" src="{{ url_for('video_feed') }}" alt="Processed video stream with real YOLO detections">
+          <div id="dangerOverlay" class="danger-overlay" aria-live="assertive">
+            <strong id="dangerTitle">DANGER — TRUCK BLIND ZONE</strong>
+            <span>DO NOT ENTER THE BLIND ZONE</span>
+          </div>
+          <div class="live-pill"><span></span> YOLO + MEDIAPIPE</div>
+        </div>
+
+        <form id="uploadForm" class="controls">
+          <label class="file-control" for="videoInput">
+            <span class="label">Video source</span>
+            <strong id="fileName">Choose an MP4 video</strong>
+            <input id="videoInput" name="video" type="file" accept="video/mp4,video/quicktime,video/x-msvideo,video/x-matroska,.m4v">
+          </label>
+          <button id="startButton" class="primary" type="submit">Start processing</button>
+          <button id="stopButton" class="secondary" type="button">Stop / reset</button>
+        </form>
+        <section class="zone-controls" aria-label="Zone controls">
+          <label>
+            <span>Zone mode</span>
+            <select id="zoneMode">
+              <option value="moving" selected>MOVING-CAMERA DEMO</option>
+              <option value="fixed">FIXED INTERSECTION CAMERA</option>
+            </select>
+          </label>
+          <label>
+            <span>Blind side</span>
+            <select id="blindSide">
+              <option value="right" selected>Right side</option>
+              <option value="left">Left side</option>
+            </select>
+          </label>
+          <label class="visibility-control">
+            <input id="zonesVisible" type="checkbox" checked>
+            <span>Show zones</span>
+          </label>
+          <button id="resetTrackingButton" class="compact-button" type="button">Reset zone tracking</button>
+        </section>
+        <p id="modeExplanation" class="mode-explanation">Demonstration geometry — not calibrated intersection zones. Zones follow a real detected truck in moving-camera footage.</p>
+        <p id="formMessage" class="form-message" role="status"></p>
+        <p class="rule-note">Prototype rule: danger comes from zone overlap. Pose cues never override a danger warning.</p>
+      </div>
+
+      <aside class="telemetry">
+        <section class="state-card">
+          <span class="section-label">Current state</span>
+          <div id="stateValue" class="state-value monitoring"><i></i>MONITORING</div>
+          <p id="actionValue">Upload a video and start processing.</p>
+        </section>
+
+        <section class="truck-card">
+          <span class="section-label">Primary truck</span>
+          <div class="truck-status-row"><strong id="primaryTruckStatus">NOT DETECTED</strong><span id="primaryTruckConfidence">—</span></div>
+          <dl>
+            <div><dt>Track ID</dt><dd id="primaryTrackId">Unavailable</dd></div>
+            <div><dt>Zone mode</dt><dd id="currentZoneMode">MOVING-CAMERA DEMO</dd></div>
+            <div><dt>Blind side</dt><dd id="currentBlindSide">Right side</dd></div>
+          </dl>
+        </section>
+
+        <section class="behavior-card">
+          <span class="section-label">Pedestrian pose cues</span>
+          <div class="advisory-row"><strong id="crossingAdvisory">CHECK SIGNAL AND TRAFFIC</strong><span id="poseStatus">WAITING FOR VIDEO</span></div>
+          <p id="advisoryReason">No camera system can guarantee that crossing is safe.</p>
+          <dl>
+            <div><dt>Activity</dt><dd id="activityValue">UNKNOWN</dd></div>
+            <div><dt>Head vs. truck</dt><dd id="headOrientationValue">UNKNOWN</dd></div>
+            <div><dt>Noticed truck?</dt><dd id="awarenessValue">CANNOT BE INFERRED</dd></div>
+            <div><dt>MediaPipe time</dt><dd id="mediapipeTime">0.0 ms</dd></div>
+          </dl>
+        </section>
+
+        <section class="metrics">
+          <div><span>Processing FPS</span><strong id="fpsValue">0.0</strong><small>measured</small></div>
+          <div><span>Inference time</span><strong id="latencyValue">0.0 ms</strong><small>measured</small></div>
+        </section>
+
+        <section class="detections-card">
+          <div class="section-heading"><span class="section-label">Detected objects</span><span id="detectionCount">0</span></div>
+          <div id="detectionsList" class="detections-list">
+            <div class="empty-state">No relevant objects detected.</div>
+          </div>
+        </section>
+
+        <section class="honesty-card">
+          <strong>What this prototype does</strong>
+          <p>YOLO detects person, bicycle, motorcycle, and truck classes. MediaPipe Pose estimates visible body landmarks for the selected pedestrian.</p>
+          <p>“Likely walking” uses short-term body movement. Head orientation is a low-confidence visual proxy; it cannot prove attention, awareness, intent, or that someone noticed the truck.</p>
+          <p>The crossing result is a conservative advisory from zone overlap, not a verified safety decision or production-ready technology.</p>
+        </section>
+      </aside>
+    </section>
+  </main>
+
+  <script>
+    (() => {
+      "use strict";
+      const form = document.getElementById("uploadForm");
+      const input = document.getElementById("videoInput");
+      const fileName = document.getElementById("fileName");
+      const startButton = document.getElementById("startButton");
+      const stopButton = document.getElementById("stopButton");
+      const message = document.getElementById("formMessage");
+      const stateValue = document.getElementById("stateValue");
+      const actionValue = document.getElementById("actionValue");
+      const fpsValue = document.getElementById("fpsValue");
+      const latencyValue = document.getElementById("latencyValue");
+      const countValue = document.getElementById("detectionCount");
+      const list = document.getElementById("detectionsList");
+      const dangerOverlay = document.getElementById("dangerOverlay");
+      const dangerTitle = document.getElementById("dangerTitle");
+      const zoneMode = document.getElementById("zoneMode");
+      const blindSide = document.getElementById("blindSide");
+      const zonesVisible = document.getElementById("zonesVisible");
+      const resetTrackingButton = document.getElementById("resetTrackingButton");
+      const modeExplanation = document.getElementById("modeExplanation");
+      const primaryTruckStatus = document.getElementById("primaryTruckStatus");
+      const primaryTruckConfidence = document.getElementById("primaryTruckConfidence");
+      const primaryTrackId = document.getElementById("primaryTrackId");
+      const currentZoneMode = document.getElementById("currentZoneMode");
+      const currentBlindSide = document.getElementById("currentBlindSide");
+      const crossingAdvisory = document.getElementById("crossingAdvisory");
+      const poseStatus = document.getElementById("poseStatus");
+      const advisoryReason = document.getElementById("advisoryReason");
+      const activityValue = document.getElementById("activityValue");
+      const headOrientationValue = document.getElementById("headOrientationValue");
+      const awarenessValue = document.getElementById("awarenessValue");
+      const mediapipeTime = document.getElementById("mediapipeTime");
+      let previousState = "MONITORING";
+      let audioContext = null;
+
+      input.addEventListener("change", () => {
+        fileName.textContent = input.files.length ? input.files[0].name : "Choose an MP4 video";
+        message.textContent = "";
+      });
+
+      function ensureAudio() {
+        if (!audioContext) audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        if (audioContext.state === "suspended") audioContext.resume();
+      }
+
+      function warningTone() {
+        if (!audioContext) return;
+        const oscillator = audioContext.createOscillator();
+        const gain = audioContext.createGain();
+        oscillator.type = "square";
+        oscillator.frequency.setValueAtTime(760, audioContext.currentTime);
+        oscillator.frequency.exponentialRampToValueAtTime(510, audioContext.currentTime + 0.32);
+        gain.gain.setValueAtTime(0.0001, audioContext.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.16, audioContext.currentTime + 0.025);
+        gain.gain.exponentialRampToValueAtTime(0.0001, audioContext.currentTime + 0.38);
+        oscillator.connect(gain).connect(audioContext.destination);
+        oscillator.start();
+        oscillator.stop(audioContext.currentTime + 0.4);
+      }
+
+      async function updateZoneSettings(resetTracking = false) {
+        resetTrackingButton.disabled = true;
+        try {
+          const response = await fetch("/api/settings", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              zone_mode: zoneMode.value,
+              blind_side: blindSide.value,
+              zones_visible: zonesVisible.checked,
+              reset_tracking: resetTracking
+            })
+          });
+          const data = await response.json();
+          if (!response.ok) throw new Error(data.error || "Could not update zone settings.");
+          if (resetTracking) message.textContent = "Primary truck smoothing and retained zones were reset.";
+        } catch (error) {
+          message.textContent = error.message;
+        } finally {
+          resetTrackingButton.disabled = false;
+        }
+      }
+
+      zoneMode.addEventListener("change", () => updateZoneSettings());
+      blindSide.addEventListener("change", () => updateZoneSettings(true));
+      zonesVisible.addEventListener("change", () => updateZoneSettings());
+      resetTrackingButton.addEventListener("click", () => updateZoneSettings(true));
+
+      form.addEventListener("submit", async event => {
+        event.preventDefault();
+        if (!input.files.length) {
+          message.textContent = "Choose a video file first.";
+          return;
+        }
+        ensureAudio();
+        startButton.disabled = true;
+        message.textContent = "Uploading video...";
+        const body = new FormData();
+        body.append("video", input.files[0]);
+        try {
+          const response = await fetch("/api/start", { method: "POST", body });
+          const data = await response.json();
+          if (!response.ok) throw new Error(data.error || "Could not start processing.");
+          message.textContent = "Real YOLO processing started.";
+        } catch (error) {
+          message.textContent = error.message;
+          startButton.disabled = false;
+        }
+      });
+
+      stopButton.addEventListener("click", async () => {
+        stopButton.disabled = true;
+        try {
+          await fetch("/api/stop", { method: "POST" });
+          input.value = "";
+          fileName.textContent = "Choose an MP4 video";
+          message.textContent = "Processing stopped and the temporary upload was removed.";
+          startButton.disabled = false;
+        } finally {
+          stopButton.disabled = false;
+        }
+      });
+
+      function renderDetections(detections) {
+        countValue.textContent = detections.length;
+        if (!detections.length) {
+          list.innerHTML = '<div class="empty-state">No relevant objects detected.</div>';
+          return;
+        }
+        list.innerHTML = "";
+        detections.forEach(item => {
+          const row = document.createElement("div");
+          row.className = `detection-row ${item.class}`;
+          const identity = item.track_id === undefined ? "" : ` · ID ${item.track_id}`;
+          row.innerHTML = `<span class="object-dot"></span><strong>${item.class}</strong><span>${(item.confidence * 100).toFixed(1)}%${identity}</span>`;
+          list.appendChild(row);
+        });
+      }
+
+      function renderStatus(data) {
+        const stateClass = data.state.toLowerCase().replace(" ", "-");
+        stateValue.className = `state-value ${stateClass}`;
+        stateValue.innerHTML = `<i></i>${data.state}`;
+        actionValue.textContent = data.action;
+        fpsValue.textContent = Number(data.fps).toFixed(1);
+        latencyValue.textContent = `${Number(data.inference_ms).toFixed(1)} ms`;
+        startButton.disabled = data.running;
+        dangerOverlay.classList.toggle("show", data.state === "DANGER");
+        dangerTitle.textContent = data.zone_mode === "fixed" ? "DANGER — TURNING TRUCK" : "DANGER — TRUCK BLIND ZONE";
+        zoneMode.value = data.zone_mode;
+        blindSide.value = data.blind_side;
+        zonesVisible.checked = data.zones_visible;
+        currentZoneMode.textContent = data.zone_mode_label;
+        currentBlindSide.textContent = data.blind_side === "right" ? "Right side" : "Left side";
+        const truck = data.primary_truck || {};
+        primaryTruckStatus.textContent = truck.status || "NOT DETECTED";
+        primaryTruckConfidence.textContent = truck.confidence == null ? "—" : `${(truck.confidence * 100).toFixed(1)}% confidence`;
+        primaryTrackId.textContent = truck.track_id == null ? "Unavailable" : String(truck.track_id);
+        const pedestrian = data.pedestrian_analysis || {};
+        crossingAdvisory.textContent = pedestrian.advisory || "CHECK SIGNAL AND TRAFFIC";
+        crossingAdvisory.className = data.state === "DANGER" ? "danger-text" : data.state === "MONITORING" ? "" : "caution-text";
+        poseStatus.textContent = pedestrian.status || "NOT AVAILABLE";
+        advisoryReason.textContent = pedestrian.advisory_reason || "No camera system can guarantee that crossing is safe.";
+        activityValue.textContent = pedestrian.activity ? `${pedestrian.activity} (${pedestrian.activity_confidence || "LOW"})` : "UNKNOWN";
+        headOrientationValue.textContent = pedestrian.head_orientation ? `${pedestrian.head_orientation} (${pedestrian.head_orientation_confidence || "LOW"})` : "UNKNOWN";
+        awarenessValue.textContent = pedestrian.awareness || "CANNOT BE INFERRED";
+        mediapipeTime.textContent = `${Number(pedestrian.mediapipe_ms || 0).toFixed(1)} ms`;
+        const movingMode = data.zone_mode === "moving";
+        blindSide.disabled = !movingMode;
+        resetTrackingButton.disabled = !movingMode;
+        modeExplanation.textContent = movingMode
+          ? "Demonstration geometry — not calibrated intersection zones. Zones follow a real detected truck in moving-camera footage."
+          : "Intended deployment mode: normalized polygons stay fixed because the proposed camera is mounted on a stationary traffic-light pole.";
+        if (data.state === "DANGER" && previousState !== "DANGER") warningTone();
+        if (data.error) message.textContent = data.error;
+        renderDetections(data.detections || []);
+        previousState = data.state;
+      }
+
+      async function pollStatus() {
+        try {
+          const response = await fetch("/api/status", { cache: "no-store" });
+          if (response.ok) renderStatus(await response.json());
+        } catch (_error) {
+          message.textContent = "The local server is not responding.";
+        } finally {
+          window.setTimeout(pollStatus, 350);
+        }
+      }
+
+      pollStatus();
+    })();
+  </script>
+</body>
+</html>
+
