@@ -26,6 +26,7 @@ MODEL_DIR = BASE_DIR / "models"
 ZONES_PATH = BASE_DIR / "zones.json"
 MODEL_PATH = Path(os.environ.get("YOLO_MODEL_PATH", MODEL_DIR / "yolo11n.pt"))
 POSE_MODEL_PATH = Path(os.environ.get("MEDIAPIPE_POSE_MODEL_PATH", MODEL_DIR / "pose_landmarker_lite.task"))
+APP_PORT = int(os.environ.get("APP_PORT", "5000"))
 ALLOWED_EXTENSIONS = {".mp4", ".mov", ".avi", ".mkv", ".m4v"}
 MAX_UPLOAD_BYTES = 500 * 1024 * 1024
 RELEVANT_CLASSES = {0: "person", 1: "bicycle", 3: "motorcycle", 7: "truck"}
@@ -730,5 +731,6 @@ def too_large(_error):
 
 
 if __name__ == "__main__":
-    app.run(host="127.0.0.1", port=5000, threaded=True, debug=False)
+    app.run(host="127.0.0.1", port=APP_PORT, threaded=True, debug=False)
+
 
