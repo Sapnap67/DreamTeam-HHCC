@@ -61,6 +61,10 @@
           <button id="resetTrackingButton" class="compact-button" type="button">Reset zone tracking</button>
         </section>
         <section id="fixedCalibration" class="fixed-calibration" hidden aria-label="Fixed-camera zone calibration">
+          <div id="sceneDraft" class="scene-draft" hidden>
+            <div><span class="section-label">Road + sidewalk draft</span><p id="sceneDraftStatus">Analyzing the first fixed-camera frame…</p></div>
+            <button id="applySceneDraftButton" class="compact-button save-zones" type="button">Use draft zones</button>
+          </div>
           <div class="calibration-heading">
             <div><span class="section-label">Fixed-camera calibration</span><p>Choose a zone, then click its corners on the video.</p></div>
             <select id="calibrationZone" aria-label="Zone to edit">
@@ -186,6 +190,9 @@
       const clearZoneButton = document.getElementById("clearZoneButton");
       const discardZonesButton = document.getElementById("discardZonesButton");
       const saveZonesButton = document.getElementById("saveZonesButton");
+      const sceneDraft = document.getElementById("sceneDraft");
+      const sceneDraftStatus = document.getElementById("sceneDraftStatus");
+      const applySceneDraftButton = document.getElementById("applySceneDraftButton");
       let previousState = "MONITORING";
       let audioContext = null;
       let editableZones = null;
@@ -336,6 +343,21 @@
           saveZonesButton.disabled = false;
         }
       });
+      applySceneDraftButton.addEventListener("click", async () => {
+        applySceneDraftButton.disabled = true;
+        try {
+          const response = await fetch("/api/scene-draft/apply", { method: "POST" });
+          const data = await response.json();
+          if (!response.ok) throw new Error(data.error || "Could not apply the scene draft.");
+          editableZones = cloneZones(data.zones);
+          message.textContent = "Draft zones applied. Review and adjust their corners before the demo.";
+          renderCalibrationOverlay();
+        } catch (error) {
+          message.textContent = error.message;
+        } finally {
+          applySceneDraftButton.disabled = false;
+        }
+      });
       window.addEventListener("resize", renderCalibrationOverlay);
 
       form.addEventListener("submit", async event => {
@@ -431,6 +453,17 @@
           : calibrationReady
             ? "Click each zone's corners on the video, then save. Fixed polygons are stored in zones.json for this camera view."
             : "Upload and start a representative fixed-camera clip before drawing calibration zones.";
+        const scene = data.scene_analysis || {};
+        const draftReady = scene.status === "DRAFT READY" && scene.suggested_zones;
+        sceneDraft.hidden = movingMode || !calibrationReady;
+        sceneDraftStatus.textContent = draftReady
+          ? "Road and sidewalk are highlighted on the video. The zone shapes are a draft—review them before use."
+          : scene.status === "DRAFT READY"
+            ? "The model found road pixels but could not form a reliable sidewalk-boundary draft. Draw the zones manually."
+          : scene.status === "UNAVAILABLE"
+            ? `Road/sidewalk analysis unavailable: ${scene.error || "model could not run"}`
+            : "Analyzing the first fixed-camera frame for road and sidewalk…";
+        applySceneDraftButton.disabled = !draftReady;
         if (!movingMode && editableZones === null) {
           editableZones = cloneZones(data.fixed_zones || {});
           renderCalibrationOverlay();
