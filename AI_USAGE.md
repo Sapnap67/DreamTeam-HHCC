@@ -46,3 +46,4 @@ This document will be updated as AI tools are used during development.
 | Date | Tool | Purpose | Team review or modification |
 | --- | --- | --- | --- |
 | 2026-08-21 | ChatGPT | Rule interpretation, feasibility evaluation, and repository setup guidance | The team reviewed the information and retained control of all project decisions |
+| 2026-08-22 | OpenAI Codex | Reworked the team-designed simulation into an explainable recorded right-turn replay demo; implemented interface code and documentation | Team must test, explain, and meaningfully modify the result before submission |
