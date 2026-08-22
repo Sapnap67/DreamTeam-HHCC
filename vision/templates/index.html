@@ -98,16 +98,25 @@
           <div><span>Inference time</span><strong id="latencyValue">0.0 ms</strong><small>measured</small></div>
         </section>
 
+        <section class="scene-card">
+          <span class="section-label">Road context</span>
+          <dl>
+            <div><dt>Vehicles</dt><dd id="vehiclesValue">None detected</dd></div>
+            <div><dt>Traffic controls</dt><dd id="controlsValue">None detected</dd></div>
+          </dl>
+          <p>Traffic-light colour and right-of-way are not inferred.</p>
+        </section>
+
         <section class="detections-card">
           <div class="section-heading"><span class="section-label">Detected objects</span><span id="detectionCount">0</span></div>
           <div id="detectionsList" class="detections-list">
-            <div class="empty-state">No relevant objects detected.</div>
+            <div class="empty-state">No road objects detected.</div>
           </div>
         </section>
 
         <section class="honesty-card">
           <strong>What this prototype does</strong>
-          <p>YOLO detects person, bicycle, motorcycle, and truck classes. MediaPipe Pose estimates visible body landmarks for the selected pedestrian.</p>
+          <p>YOLO detects people, bicycles, cars, motorcycles, buses, trucks, traffic lights, and stop signs. MediaPipe Pose estimates visible body landmarks for the selected pedestrian.</p>
           <p>“Likely walking” uses short-term body movement. Head orientation is a low-confidence visual proxy; it cannot prove attention, awareness, intent, or that someone noticed the truck.</p>
           <p>The crossing result is a conservative advisory from zone overlap, not a verified safety decision or production-ready technology.</p>
         </section>
@@ -149,6 +158,8 @@
       const headOrientationValue = document.getElementById("headOrientationValue");
       const awarenessValue = document.getElementById("awarenessValue");
       const mediapipeTime = document.getElementById("mediapipeTime");
+      const vehiclesValue = document.getElementById("vehiclesValue");
+      const controlsValue = document.getElementById("controlsValue");
       let previousState = "MONITORING";
       let audioContext = null;
 
@@ -243,7 +254,7 @@
       function renderDetections(detections) {
         countValue.textContent = detections.length;
         if (!detections.length) {
-          list.innerHTML = '<div class="empty-state">No relevant objects detected.</div>';
+          list.innerHTML = '<div class="empty-state">No road objects detected.</div>';
           return;
         }
         list.innerHTML = "";
@@ -284,6 +295,9 @@
         headOrientationValue.textContent = pedestrian.head_orientation ? `${pedestrian.head_orientation} (${pedestrian.head_orientation_confidence || "LOW"})` : "UNKNOWN";
         awarenessValue.textContent = pedestrian.awareness || "CANNOT BE INFERRED";
         mediapipeTime.textContent = `${Number(pedestrian.mediapipe_ms || 0).toFixed(1)} ms`;
+        const context = data.scene_context || {};
+        vehiclesValue.textContent = (context.vehicles || []).join(", ") || "None detected";
+        controlsValue.textContent = (context.traffic_controls || []).join(", ") || "None detected";
         const movingMode = data.zone_mode === "moving";
         blindSide.disabled = !movingMode;
         resetTrackingButton.disabled = !movingMode;
@@ -312,4 +326,5 @@
   </script>
 </body>
 </html>
+
 
