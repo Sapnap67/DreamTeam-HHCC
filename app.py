@@ -675,7 +675,11 @@ class DetectionEngine:
         return np.asarray([[round(x * width), round(y * height)] for x, y in points], dtype=np.int32)
 
     def _draw_scene_layers(self, frame: np.ndarray, scene_analysis: dict[str, Any] | None) -> None:
-        if not scene_analysis or scene_analysis.get("status") != "DRAFT READY":
+        if (
+            not scene_analysis
+            or scene_analysis.get("status") != "DRAFT READY"
+            or not scene_analysis.get("suggested_zones")
+        ):
             return
         height, width = frame.shape[:2]
         overlay = frame.copy()
@@ -805,7 +809,8 @@ def api_settings():
 
 @app.get("/api/fixed-zones")
 def api_fixed_zones():
-    return jsonify({"zones": engine.snapshot()["fixed_zones"]})
+    snapshot = engine.snapshot()
+    return jsonify({"zones": snapshot["fixed_zones"], "calibrated": snapshot["fixed_zones_calibrated"]})
 
 
 @app.post("/api/fixed-zones")
