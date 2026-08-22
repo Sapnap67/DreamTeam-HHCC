@@ -1,38 +1,34 @@
 # Python
 __pycache__/
 *.py[cod]
-*.pyd
-*.so
-.Python
+.venv/
+venv/
+env/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
 
-# Virtual environments
-.venv/
-venv/
-env/
-
-# Local configuration and secrets
+# Local configuration
 .env
 .env.*
 !.env.example
 .yolo-config/
-.runtime/
 
 # YOLO models and generated data
 *.pt
 *.onnx
+*.task
+models/*
+!models/.gitkeep
 input/*
 output/*
 !input/.gitkeep
 !output/.gitkeep
 
-# Logs
+# Logs, editors, and operating systems
 *.log
-
-# Editors and operating systems
 .vscode/
 .idea/
 .DS_Store
 Thumbs.db
+
