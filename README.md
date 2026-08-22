@@ -60,9 +60,9 @@ Only one video is processed at a time. Uploads are temporary; processed video is
 
 ## Risk heuristic
 
-The selected bus or truck is compared with detected people, bicycles, and motorcycles. Cars remain visible YOLO detections but cannot activate the pedestrian warning. The internal heuristic considers smoothed bottom-center motion, decreasing image-space distance, projected path convergence, selected blind-side context, lower-heavy-vehicle safety-margin overlap, confidence, and multi-frame persistence. The internal safety margin is never drawn.
+Every tracked car, motorcycle, bus, and truck is compared with every tracked person and bicycle. The highest-risk supported pair controls the warning. The internal heuristic considers smoothed bottom-center motion, relative direction, decreasing image-space distance, projected path convergence, short image-space time-to-collision where reliable, adaptive safety-margin overlap, confidence, and multi-frame persistence. Internal margins are never drawn.
 
-`DANGER` requires four consecutive supported frames and six safe frames to clear. This reduces warning flicker and prevents a truck plus an unrelated road user from automatically producing danger.
+`CAUTION` requires two consecutive supported frames and six clear frames to reset. `DANGER` requires four consecutive supported frames and eight clear frames to reset. Persistence is tied to the selected pair, so evidence from unrelated pairs is not combined.
 
 ## Limitations
 
