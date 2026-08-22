@@ -57,7 +57,9 @@ The interface provides two zone modes.
 
 ### Fixed Intersection Camera
 
-This is the intended deployment mode for a camera mounted on a stationary traffic-light pole. Fixed zones must be calibrated for the actual camera viewpoint: upload a representative clip, select a zone in the **Fixed-camera calibration** panel, click its corners on the live image, and choose **Save fixed zones**. The app saves the normalized coordinates to `zones.json` and uses them immediately. Each of the three zones needs at least three points. Recalibrate whenever the camera is moved or its view changes.
+This is the intended deployment mode for a camera mounted on a stationary traffic-light pole. On the first frame of a fixed-camera clip, the app runs a Cityscapes semantic-segmentation model to highlight **road** and **sidewalk** pixels and propose editable draft zones at their boundary. The model downloads once on first use, so the computer needs internet access for that first analysis.
+
+The draft is not a safety decision and is never enabled automatically. Review it, choose **Use draft zones**, then adjust any corners in the **Fixed-camera calibration** panel and choose **Save fixed zones**. The app saves approved geometry to `zones.json` and uses it immediately. Each of the three zones needs at least three points. Recalibrate whenever the camera is moved or its view changes.
 
 ### Moving-Camera Demo
 
@@ -109,5 +111,4 @@ The warning zone has priority over pose cues. For example, a person oriented tow
 - Detection quality depends on lighting, occlusion, perspective, video quality, and the pretrained model.
 - Activity labels need several consecutive frames and are less reliable without stable YOLO track IDs.
 - Webcam input is intentionally deferred until uploaded-video mode is proven reliable.
-
 
