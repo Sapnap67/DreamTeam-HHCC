@@ -2,6 +2,37 @@
 
 This file records user-visible and safety-logic changes to the project. Update it whenever the application, detection behavior, zone geometry, warning rules, interface, dependencies, or documentation changes.
 
+## 2026-08-22 — Conservative MediaPipe Cues and Episode Audio
+
+### Added
+
+- Added optional MediaPipe Pose Landmarker Lite processing for one selected real YOLO person crop every third processed frame. Selection prioritizes the person used by the backend risk calculation, then the closest person to the primary heavy vehicle, then the largest person.
+- Added a `PEDESTRIAN OBSERVATIONS` card with conservative activity, low-confidence head-orientation proxy, separate measured MediaPipe time, and an explicit `CANNOT BE INFERRED` awareness value.
+- Added a two-note caution chime and a more urgent two-pulse danger alert. Backend sound-event IDs ensure each sound is emitted once per active risk episode rather than once per status poll.
+- Added unit tests for conservative pose classification, unavailable fallback behavior, and sound-event episode deduplication.
+- Added `AI_USAGE.md`, a safe official-model download helper, and ignored local MediaPipe model files.
+
+### Safety boundaries
+
+- YOLO detections and the existing image-space risk heuristic remain the only authority for warning states and timeline events. MediaPipe observations cannot change `MONITORING`, `VEHICLE TRACKED`, `CAUTION`, `DANGER`, evidence, or session reports.
+- Pose failures and missing dependencies/models are caught and shown as unavailable while YOLO safety monitoring continues.
+- Hardware signal testing can demonstrate both sounds but remains frontend-only and creates no safety event.
+
+### Dependencies
+
+- Added `mediapipe==0.10.21` and constrained NumPy to the MediaPipe-compatible `>=1.26,<2.0` range.
+
+### Validation
+
+- Installed and verified MediaPipe `0.10.21` with Pose Landmarker Lite, OpenCV `4.11.0`, NumPy `1.26.4`, and Ultralytics `8.4.126` on Python 3.12.
+- Processed all 887 frames of the 29.57-second `597c87ba7da9a558ff93383a67213301.mp4` source once with the pose model deliberately unavailable and once with it enabled. Neither pass produced a Python error.
+- The fallback and enabled passes produced the same 11 warning transitions at `15.867`, `16.200`, `17.400`, `17.500`, `18.400`, `18.533`, `19.133`, `19.200`, `21.300`, `22.400`, and `22.700` seconds, confirming that pose output did not affect risk states or timeline events.
+- Measured CPU throughput was `9.92 FPS` without pose inference and `8.45 FPS` with pose inference; selected-crop MediaPipe processing averaged `37.03 ms` in the enabled pass.
+- Both passes generated five caution sound events and one danger sound event, matching the five real caution episodes and the single danger escalation without poll-based repeats.
+- Confirmed the unavailable path displayed only `POSE NOT AVAILABLE`, while the enabled path produced conservative walking, standing, uncertain, and unavailable samples without any awareness inference.
+- Passed the automated conservative-classification and sound-deduplication tests, Python compilation, rendered-route checks, inline JavaScript parsing, and a Flask browser session with successful page, stylesheet, stream, settings, and status requests and no browser console errors.
+- Matched the requested UI safety wording exactly: `Supporting observation only — does not control the warning.` and `MediaPipe unavailable — YOLO warning system still active.`
+
 ## 2026-08-22 — Crossing-Safety Wording
 
 ### Changed
