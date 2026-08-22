@@ -63,7 +63,7 @@
         <section id="fixedCalibration" class="fixed-calibration" hidden aria-label="Fixed-camera zone calibration">
           <div id="sceneDraft" class="scene-draft" hidden>
             <div><span class="section-label">Road + sidewalk draft</span><p id="sceneDraftStatus">Analyzing the first fixed-camera frame…</p></div>
-            <button id="applySceneDraftButton" class="compact-button save-zones" type="button">Use auto zone draft</button>
+            <button id="loadSurfaceSuggestionsButton" class="compact-button" type="button">Preview AI surfaces</button>
           </div>
           <div class="calibration-heading">
             <div><span class="section-label">Fixed-camera calibration</span><p>Select a layer and click its corners. Finish each road or sidewalk polygon before starting another.</p></div>
@@ -204,12 +204,13 @@
       const saveZonesButton = document.getElementById("saveZonesButton");
       const sceneDraft = document.getElementById("sceneDraft");
       const sceneDraftStatus = document.getElementById("sceneDraftStatus");
-      const applySceneDraftButton = document.getElementById("applySceneDraftButton");
+      const loadSurfaceSuggestionsButton = document.getElementById("loadSurfaceSuggestionsButton");
       let previousState = "MONITORING";
       let audioContext = null;
       let editableZones = null;
       let editableSurfaces = null;
       let surfaceDrafts = { road_polygons: [], sidewalk_polygons: [] };
+      let latestSurfaceSuggestions = null;
       let calibrationReady = false;
 
       input.addEventListener("change", () => {
@@ -455,20 +456,12 @@
           saveZonesButton.disabled = false;
         }
       });
-      applySceneDraftButton.addEventListener("click", async () => {
-        applySceneDraftButton.disabled = true;
-        try {
-          const response = await fetch("/api/scene-draft/apply", { method: "POST" });
-          const data = await response.json();
-          if (!response.ok) throw new Error(data.error || "Could not apply the scene draft.");
-          editableZones = cloneZones(data.zones);
-          message.textContent = "Draft zones applied. Review and adjust their corners before the demo.";
-          renderCalibrationOverlay();
-        } catch (error) {
-          message.textContent = error.message;
-        } finally {
-          applySceneDraftButton.disabled = false;
-        }
+      loadSurfaceSuggestionsButton.addEventListener("click", () => {
+        if (!latestSurfaceSuggestions) return;
+        editableSurfaces = cloneSurfaces(latestSurfaceSuggestions);
+        surfaceDrafts = { road_polygons: [], sidewalk_polygons: [] };
+        message.textContent = "AI surface suggestions loaded for editing. They are not saved and cannot trigger warnings.";
+        renderCalibrationOverlay();
       });
       window.addEventListener("resize", renderCalibrationOverlay);
 
@@ -566,16 +559,22 @@
             ? "Click each zone's corners on the video, then save. Fixed polygons are stored in zones.json for this camera view."
             : "Upload and start a representative fixed-camera clip before drawing calibration zones.";
         const scene = data.scene_analysis || {};
-        const draftReady = scene.status === "DRAFT READY" && scene.suggested_zones;
+        const draftReady = scene.status === "DRAFT READY"
+          && (scene.road_polygons || []).length
+          && (scene.sidewalk_polygons || []).length;
+        latestSurfaceSuggestions = draftReady ? {
+          road_polygons: scene.road_polygons || [],
+          sidewalk_polygons: scene.sidewalk_polygons || []
+        } : null;
         sceneDraft.hidden = movingMode || !calibrationReady;
         sceneDraftStatus.textContent = draftReady
-          ? `${(scene.road_polygons || []).length} road surface(s) and ${(scene.sidewalk_polygons || []).length} sidewalk surface(s) suggested. Correct them before saving.`
+          ? `${(scene.road_polygons || []).length} road and ${(scene.sidewalk_polygons || []).length} sidewalk suggestions are available but hidden. Preview only if useful.`
           : scene.status === "DRAFT READY"
             ? "The model found road pixels but could not form a reliable sidewalk-boundary draft. Draw the zones manually."
           : scene.status === "UNAVAILABLE"
             ? `Road/sidewalk analysis unavailable: ${scene.error || "model could not run"}`
             : "Analyzing the first fixed-camera frame for road and sidewalk…";
-        applySceneDraftButton.disabled = !draftReady;
+        loadSurfaceSuggestionsButton.disabled = !draftReady;
         if (!movingMode && editableZones === null) {
           editableZones = data.fixed_zones_calibrated
             ? cloneZones(data.fixed_zones || {})
@@ -585,12 +584,7 @@
         if (!movingMode && editableSurfaces === null) {
           if (data.surface_map_calibrated) {
             editableSurfaces = cloneSurfaces(data.surface_map || {});
-          } else if (scene.status === "DRAFT READY") {
-            editableSurfaces = cloneSurfaces({
-              road_polygons: scene.road_polygons || [],
-              sidewalk_polygons: scene.sidewalk_polygons || []
-            });
-          }
+          } else editableSurfaces = { road_polygons: [], sidewalk_polygons: [] };
         }
         renderCalibrationOverlay();
         if (data.state === "DANGER" && previousState !== "DANGER") warningTone();
