@@ -31,6 +31,14 @@ h1 { margin: 0; font-size: 23px; letter-spacing: -.025em; }
 .calibration-polygon.active { fill: rgba(255,185,85,.18); stroke: var(--amber); stroke-width: 3; }
 .calibration-point { fill: #57ddb2; stroke: #0b1217; stroke-width: 2; }
 .calibration-point.active { fill: var(--amber); }
+.surface-polygon { vector-effect: non-scaling-stroke; stroke-width: 2; }
+.surface-polygon.road-surface { fill: rgba(43,136,232,.12); stroke: #2b88e8; }
+.surface-polygon.sidewalk-surface { fill: rgba(235,83,191,.14); stroke: #eb53bf; }
+.surface-polygon.active { stroke-width: 3; }
+.surface-polygon.draft { fill: none; stroke-dasharray: 7 5; }
+.surface-point { stroke: #0b1217; stroke-width: 2; }
+.surface-point.road-surface { fill: #2b88e8; }
+.surface-point.sidewalk-surface { fill: #eb53bf; }
 .live-pill { position: absolute; left: 15px; bottom: 15px; padding: 7px 9px; border-radius: 6px; background: rgba(8,14,18,.78); border: 1px solid rgba(255,255,255,.14); backdrop-filter: blur(8px); font-size: 10px; font-weight: 900; letter-spacing: .1em; }
 .live-pill span { display: inline-block; width: 6px; height: 6px; margin-right: 6px; border-radius: 50%; background: var(--mint); box-shadow: 0 0 10px var(--mint); }
 .danger-overlay { position: absolute; z-index: 2; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; opacity: 0; pointer-events: none; border: 10px solid transparent; background: radial-gradient(circle, rgba(118,5,12,.16), rgba(255,13,28,.04)); transition: opacity .15s; }
@@ -65,6 +73,7 @@ button:disabled { cursor: wait; opacity: .45; }
 .calibration-actions { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 9px; }
 .calibration-actions .compact-button { align-self: auto; }
 .save-zones { color: #1e1607; background: var(--amber); border-color: var(--amber); }
+.save-surfaces { color: #061a22; background: #64b5ef; border-color: #64b5ef; }
 .mode-explanation { margin: 8px 2px 0; color: #b6c8cd; font-size: 11px; line-height: 1.45; }
 .form-message { min-height: 18px; margin: 8px 2px 0; color: var(--amber); font-size: 12px; }
 .rule-note { margin: 6px 2px 0; color: var(--muted); font-size: 11px; }
