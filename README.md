@@ -16,14 +16,28 @@ BlindSpot Guardian is a 36-hour HHCC 2026 prototype for exploring vehicle and vu
 
 ## Setup
 
-Use **Python 3.11** for the most predictable Windows and macOS dependency compatibility.
+Use **64-bit Python 3.11** for the most predictable Windows compatibility. Model files are downloaded on the first setup and ignored by Git.
 
-The pretrained model files are **not stored in this repository**. They are downloaded from their official providers and ignored by Git:
+### Easy Windows startup
 
-- `yolo11n.pt` is required for YOLO detection.
-- `models/pose_landmarker_lite.task` is optional. Without it, YOLO warnings still work and the pedestrian-observation card reports that MediaPipe is unavailable.
+1. Download the repository as a ZIP and extract it, or clone it with Git.
+2. Install [Python 3.11](https://www.python.org/downloads/) if necessary. During installation, enable **Add python.exe to PATH**.
+3. Double-click `start.bat`.
 
-### Windows (PowerShell)
+The portable launcher uses a private `.venv` inside the project and does not depend on environments or paths from the original developer's computer. On its first run it will:
+
+- select Python 3.11, 3.12, or 3.10;
+- create the local environment;
+- install the packages in `requirements.txt`;
+- download the required official `yolo11n.pt` model;
+- attempt to download the optional MediaPipe Pose Landmarker model;
+- start Flask and open <http://127.0.0.1:5000>.
+
+The first setup requires internet access and can take several minutes. Keep the command window open. Later starts reuse the environment and downloaded models and should be much faster. Press `Ctrl+C` in the command window to stop the server.
+
+If setup fails, read the final message rather than closing the window. Check the internet connection and confirm that Python is a supported 64-bit version. If the local environment became incomplete, delete **only** the project's `.venv` folder and double-click `start.bat` again.
+
+### Manual Windows startup
 
 ```powershell
 cd "path\to\DreamTeam-HHCC"
@@ -33,41 +47,16 @@ py -3.11 -m venv .venv
 
 python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
-
-python -c "from ultralytics import YOLO; YOLO('yolo11n.pt')"
+python download_yolo_model.py
 python download_pose_model.py
-
 python app.py
 ```
 
-Open <http://127.0.0.1:5000>. Keep PowerShell open and press `Ctrl+C` to stop.
+The MediaPipe model is optional. If its download fails, the real YOLO detection and warning system can still run.
 
-After this first-time setup, Windows users can normally double-click `start.bat`. If `yolo11n.pt` is missing, the launcher intentionally stops instead of pretending that detection is available. Run the YOLO download command above, then start it again.
+### macOS
 
-The MediaPipe model is optional. Windows users may run `download_pose_model.bat` instead of the Python downloader.
-
-### macOS (Terminal)
-
-Install Python 3.11 first if `python3.11` is unavailable, then run:
-
-```bash
-cd "/path/to/DreamTeam-HHCC"
-
-python3.11 -m venv .venv
-source .venv/bin/activate
-
-python -m pip install --upgrade pip
-python -m pip install -r requirements.txt
-
-python -c "from ultralytics import YOLO; YOLO('yolo11n.pt')"
-python download_pose_model.py
-
-python app.py
-```
-
-Open <http://127.0.0.1:5000>. Keep Terminal open and press `Control+C` to stop.
-
-The application uses CPU inference for portability. The first setup requires internet access to install dependencies and download models; download everything before the roadshow so the demonstration can run offline.
+The Python application is designed to be cross-platform, but the one-click launcher in this version targets Windows. macOS setup will be finalized separately.
 
 ## Demo
 
