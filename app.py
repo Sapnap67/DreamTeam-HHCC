@@ -17,6 +17,7 @@ from ultralytics import YOLO
 from werkzeug.utils import secure_filename
 
 from behavior import PoseBehaviorAnalyzer, empty_analysis
+from scene import RoadSidewalkAnalyzer, empty_scene
 
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -111,7 +112,20 @@ def validate_zones(zones: Any) -> dict[str, list[list[float]]]:
 
 def load_zones() -> dict[str, list[list[float]]]:
     with ZONES_PATH.open("r", encoding="utf-8") as handle:
-        return validate_zones(json.load(handle))
+        saved = json.load(handle)
+    return validate_zones(saved.get("zones", saved))
+
+
+def saved_zones_are_calibrated() -> bool:
+    with ZONES_PATH.open("r", encoding="utf-8") as handle:
+        saved = json.load(handle)
+    return bool(saved.get("calibrated", False)) if isinstance(saved, dict) else False
+
+
+def save_zones(zones: dict[str, list[list[float]]]) -> None:
+    ZONES_PATH.write_text(
+        json.dumps({"calibrated": True, "zones": zones}, indent=2) + "\n", encoding="utf-8"
+    )
 
 
 def blank_frame(message: str = "Upload a video to begin real YOLO processing") -> bytes:
@@ -131,6 +145,7 @@ class DetectionEngine:
         self.worker: threading.Thread | None = None
         self.model: YOLO | None = None
         self.pose_analyzer = PoseBehaviorAnalyzer(POSE_MODEL_PATH)
+        self.scene_analyzer = RoadSidewalkAnalyzer()
         self.source_path: Path | None = None
         self.frame_number = 0
         self.latest_jpeg = blank_frame()
@@ -144,6 +159,8 @@ class DetectionEngine:
         self.last_dynamic_zones: dict[str, list[list[float]]] | None = None
         self.truck_lost_frames = 0
         self.fixed_zones = load_zones()
+        self.fixed_zones_calibrated = saved_zones_are_calibrated()
+        self.scene_analysis = empty_scene()
         self.status: dict[str, Any] = self._initial_status()
 
     @staticmethod
@@ -167,6 +184,7 @@ class DetectionEngine:
                 "lost_frames": 0,
             },
             "scene_context": {"vehicles": [], "traffic_controls": []},
+            "scene_analysis": empty_scene(),
             "pedestrian_analysis": empty_analysis("MONITORING", "WAITING FOR VIDEO"),
         }
 
@@ -181,6 +199,7 @@ class DetectionEngine:
                     "zones_visible": self.zones_visible,
                     "tracking_available": YOLO_TRACKING_AVAILABLE,
                     "fixed_zones": self.fixed_zones,
+                    "fixed_zones_calibrated": self.fixed_zones_calibrated,
                 }
             )
             return snapshot
@@ -212,10 +231,18 @@ class DetectionEngine:
         except ValueError as exc:
             return False, str(exc)
         with self.lock:
-            ZONES_PATH.write_text(json.dumps(validated, indent=2) + "\n", encoding="utf-8")
+            save_zones(validated)
             self.fixed_zones = validated
+            self.fixed_zones_calibrated = True
             self.warning_reset_requested = True
             return True, "Fixed-camera zones saved."
+
+    def apply_scene_draft(self) -> tuple[bool, str]:
+        with self.lock:
+            suggested = self.scene_analysis.get("suggested_zones")
+        if suggested is None:
+            return False, "No road-and-sidewalk draft is ready yet."
+        return self.update_fixed_zones(suggested)
 
     def _reset_primary_truck(self) -> None:
         self.selected_truck_id = None
@@ -252,6 +279,7 @@ class DetectionEngine:
             self._reset_primary_truck()
             self._reset_yolo_tracker()
             self.status = self._initial_status()
+            self.scene_analysis = empty_scene("WAITING FOR FIXED-CAMERA FRAME")
             self.status.update({"running": True, "source_name": source_name, "action": "Loading YOLO model..."})
             self.worker = threading.Thread(target=self._process_video, name="yolo-video-worker", daemon=True)
             self.worker.start()
@@ -300,6 +328,12 @@ class DetectionEngine:
                     break
                 processed_frame_index += 1
 
+                if processed_frame_index == 1:
+                    with self.lock:
+                        should_analyze_scene = self.zone_mode == ZONE_MODE_FIXED
+                    if should_analyze_scene:
+                        self.scene_analysis = self.scene_analyzer.analyze(frame)
+
                 inference_start = time.perf_counter()
                 inference_options = {
                     "source": frame,
@@ -329,11 +363,15 @@ class DetectionEngine:
                     blind_side = self.blind_side
                     zones_visible = self.zones_visible
                     fixed_zones = self.fixed_zones
+                    fixed_zones_calibrated = self.fixed_zones_calibrated
+                    scene_analysis = self.scene_analysis
 
                 primary_truck, dynamic_zones, primary_status = self._update_primary_truck(
                     detections, frame.shape[1], frame.shape[0], blind_side
                 )
-                active_zones = fixed_zones if zone_mode == ZONE_MODE_FIXED else dynamic_zones
+                active_zones = (
+                    fixed_zones if zone_mode == ZONE_MODE_FIXED and fixed_zones_calibrated else dynamic_zones
+                )
                 raw_state = self._raw_warning_state(detections, active_zones, zone_mode, primary_truck)
 
                 if raw_state == "DANGER":
@@ -374,6 +412,7 @@ class DetectionEngine:
                     zone_mode,
                     primary_truck,
                     zones_visible,
+                    scene_analysis if zone_mode == ZONE_MODE_FIXED else None,
                 )
                 encode_ok, encoded = cv2.imencode(".jpg", annotated, [cv2.IMWRITE_JPEG_QUALITY, 84])
                 if not encode_ok:
@@ -400,6 +439,7 @@ class DetectionEngine:
                             "error": None,
                             "primary_truck": primary_status,
                             "scene_context": self._scene_context(detections),
+                            "scene_analysis": scene_analysis,
                             "zones_active": bool(zones_visible and active_zones),
                             "zone_polygons": active_zones,
                             "pedestrian_analysis": pedestrian_analysis,
@@ -634,6 +674,21 @@ class DetectionEngine:
     def _pixel_polygon(points: list[list[float]], width: int, height: int) -> np.ndarray:
         return np.asarray([[round(x * width), round(y * height)] for x, y in points], dtype=np.int32)
 
+    def _draw_scene_layers(self, frame: np.ndarray, scene_analysis: dict[str, Any] | None) -> None:
+        if not scene_analysis or scene_analysis.get("status") != "DRAFT READY":
+            return
+        height, width = frame.shape[:2]
+        overlay = frame.copy()
+        layers = (("road_polygons", (188, 112, 44), "ROAD"), ("sidewalk_polygons", (170, 92, 209), "SIDEWALK"))
+        for key, color, label in layers:
+            for points in scene_analysis.get(key, []):
+                polygon = self._pixel_polygon(points, width, height)
+                cv2.fillPoly(overlay, [polygon], color)
+                cv2.polylines(frame, [polygon], True, color, 2, cv2.LINE_AA)
+                anchor = tuple(polygon[0])
+                cv2.putText(frame, label, (int(anchor[0]) + 6, max(18, int(anchor[1]) + 20)), cv2.FONT_HERSHEY_SIMPLEX, 0.48, color, 2)
+        cv2.addWeighted(overlay, 0.10, frame, 0.90, 0, frame)
+
     def _draw_frame(
         self,
         frame: np.ndarray,
@@ -643,8 +698,10 @@ class DetectionEngine:
         zone_mode: str,
         primary_truck: dict[str, Any] | None,
         zones_visible: bool,
+        scene_analysis: dict[str, Any] | None = None,
     ) -> np.ndarray:
         height, width = frame.shape[:2]
+        self._draw_scene_layers(frame, scene_analysis)
         if zones_visible and zones is not None:
             overlay = frame.copy()
             polygons: dict[str, np.ndarray] = {}
@@ -755,6 +812,14 @@ def api_fixed_zones():
 def api_update_fixed_zones():
     payload = request.get_json(silent=True) or {}
     updated, message = engine.update_fixed_zones(payload.get("zones"))
+    if not updated:
+        return jsonify({"ok": False, "error": message}), 400
+    return jsonify({"ok": True, "message": message, "zones": engine.snapshot()["fixed_zones"]})
+
+
+@app.post("/api/scene-draft/apply")
+def api_apply_scene_draft():
+    updated, message = engine.apply_scene_draft()
     if not updated:
         return jsonify({"ok": False, "error": message}), 400
     return jsonify({"ok": True, "message": message, "zones": engine.snapshot()["fixed_zones"]})
