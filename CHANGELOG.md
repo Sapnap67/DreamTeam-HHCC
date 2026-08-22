@@ -2,6 +2,33 @@
 
 This file records user-visible and safety-logic changes to the project. Update it whenever the application, detection behavior, zone geometry, warning rules, interface, dependencies, or documentation changes.
 
+## 2026-08-22 — All-Vehicle Pairwise Collision-Risk Evaluation
+
+### Changed
+
+- Expanded warning evaluation from only the selected bus/truck to every tracked `car`, `motorcycle`, `bus`, and `truck` against every tracked `person` and `bicycle`.
+- Added explicit pairwise ranking so the strongest supported vehicle–road-user pair controls the frame warning. Severity is ranked first, followed by proximity, shrinking distance, path convergence, expanded-margin overlap, and short image-space time-to-collision evidence.
+- Kept the primary bus/truck selector for the large-vehicle blind-spot focus and MediaPipe fallback selection; cars and motorcycles are never labelled as a primary truck.
+- Labelled bus/truck detections as `HEAVY VEHICLE` and car/motorcycle detections as `VEHICLE` while retaining their real YOLO class and confidence.
+- Updated live warning text, explainable evidence, and timeline cards to identify the actual selected vehicle and person/cyclist pair.
+- Updated both English and Chinese live warning text to name the involved car, motorcycle, bus, or truck instead of always describing a heavy vehicle.
+- Increased clear-state hysteresis to six frames for caution and eight frames for danger. Persistence is bound to one pair so different objects cannot combine unrelated risk frames.
+
+### Risk evidence
+
+- Caution requires adequate multi-frame motion history, supported detection confidence, adaptive proximity, and decreasing distance or converging motion.
+- Danger additionally requires a short reliable image-space TTC, close converging paths, or overlapping adaptive margins while distance is decreasing. Proximity alone cannot produce danger.
+- TTC remains an image-space heuristic measured in processed frames, not real-world collision prediction.
+
+### Tests
+
+- Added automated coverage for car–pedestrian danger, motorcycle–cyclist caution, retained truck–pedestrian danger, nearby non-converging rejection, highest-risk-pair selection, and warning hysteresis.
+- Completed an initial 887-frame real-video integration pass with YOLO and MediaPipe active and no Python error; final post-hysteresis validation is recorded below.
+- Passed all eight automated tests plus Python compilation and inline JavaScript parsing.
+- Completed the final 887-frame real-video pass with no application error at `11.26 FPS` overall throughput, `65.70 ms` mean YOLO inference, and `30.31 ms` mean sampled MediaPipe inference.
+- Observed real-video caution transitions at `0.200`, `0.833`, `1.700`, `3.467`, `7.800`, `9.067`, `12.567`, `13.400`, `18.400`, `18.867`, `22.300`, and `26.467` seconds; danger transitions occurred at `19.933` and `22.367` seconds.
+- The longer clear hysteresis reduced sound episodes from 18 in the initial integration pass to 14 in the final pass while preserving supported warning entry behavior.
+
 ## 2026-08-22 — Conservative MediaPipe Cues and Episode Audio
 
 ### Added
