@@ -25,6 +25,7 @@ INPUT_DIR = BASE_DIR / "input"
 OUTPUT_DIR = BASE_DIR / "output"
 MODEL_DIR = BASE_DIR / "models"
 ZONES_PATH = BASE_DIR / "zones.json"
+SURFACES_PATH = BASE_DIR / "surfaces.json"
 MODEL_PATH = Path(os.environ.get("YOLO_MODEL_PATH", MODEL_DIR / "yolo11n.pt"))
 POSE_MODEL_PATH = Path(os.environ.get("MEDIAPIPE_POSE_MODEL_PATH", MODEL_DIR / "pose_landmarker_lite.task"))
 APP_PORT = int(os.environ.get("APP_PORT", "5000"))
@@ -50,6 +51,7 @@ ZONE_MODE_LABELS = {
     ZONE_MODE_MOVING: "MOVING-CAMERA DEMO",
 }
 ZONE_NAMES = ("TRUCK_TURN_ZONE", "ROAD_USER_APPROACH_ZONE", "CONFLICT_ZONE")
+SURFACE_NAMES = ("road_polygons", "sidewalk_polygons")
 BLIND_SIDES = {"right", "left"}
 SMOOTHING_ALPHA = 0.25
 MAX_TRUCK_LOST_FRAMES = 5
@@ -128,6 +130,45 @@ def save_zones(zones: dict[str, list[list[float]]]) -> None:
     )
 
 
+def validate_surfaces(surfaces: Any) -> dict[str, list[list[list[float]]]]:
+    if not isinstance(surfaces, dict) or set(surfaces) != set(SURFACE_NAMES):
+        raise ValueError(f"surfaces must contain exactly: {', '.join(SURFACE_NAMES)}")
+    validated: dict[str, list[list[list[float]]]] = {}
+    for name in SURFACE_NAMES:
+        polygons = surfaces[name]
+        if not isinstance(polygons, list):
+            raise ValueError(f"{name} must be a list of polygons")
+        validated_polygons: list[list[list[float]]] = []
+        for polygon in polygons:
+            if not isinstance(polygon, list) or len(polygon) < 3:
+                raise ValueError(f"Every {name} polygon needs at least three points")
+            try:
+                points = [[round(float(value), 5) for value in point] for point in polygon]
+            except (TypeError, ValueError) as exc:
+                raise ValueError(f"{name} coordinates must be numeric [x, y] pairs") from exc
+            if any(len(point) != 2 for point in points):
+                raise ValueError(f"{name} coordinates must be [x, y] pairs")
+            if any(not 0 <= value <= 1 for point in points for value in point):
+                raise ValueError(f"{name} coordinates must be normalized between 0 and 1")
+            validated_polygons.append(points)
+        validated[name] = validated_polygons
+    return validated
+
+
+def load_surfaces() -> tuple[dict[str, list[list[list[float]]]], bool]:
+    if not SURFACES_PATH.is_file():
+        return {name: [] for name in SURFACE_NAMES}, False
+    with SURFACES_PATH.open("r", encoding="utf-8") as handle:
+        saved = json.load(handle)
+    return validate_surfaces(saved.get("surfaces", saved)), bool(saved.get("calibrated", False))
+
+
+def save_surfaces(surfaces: dict[str, list[list[list[float]]]]) -> None:
+    SURFACES_PATH.write_text(
+        json.dumps({"calibrated": True, "surfaces": surfaces}, indent=2) + "\n", encoding="utf-8"
+    )
+
+
 def blank_frame(message: str = "Upload a video to begin real YOLO processing") -> bytes:
     canvas = np.full((720, 1280, 3), (13, 19, 25), dtype=np.uint8)
     cv2.rectangle(canvas, (38, 38), (1242, 682), (35, 47, 57), 2)
@@ -160,6 +201,7 @@ class DetectionEngine:
         self.truck_lost_frames = 0
         self.fixed_zones = load_zones()
         self.fixed_zones_calibrated = saved_zones_are_calibrated()
+        self.surface_map, self.surface_map_calibrated = load_surfaces()
         self.scene_analysis = empty_scene()
         self.status: dict[str, Any] = self._initial_status()
 
@@ -200,6 +242,8 @@ class DetectionEngine:
                     "tracking_available": YOLO_TRACKING_AVAILABLE,
                     "fixed_zones": self.fixed_zones,
                     "fixed_zones_calibrated": self.fixed_zones_calibrated,
+                    "surface_map": self.surface_map,
+                    "surface_map_calibrated": self.surface_map_calibrated,
                 }
             )
             return snapshot
@@ -243,6 +287,17 @@ class DetectionEngine:
         if suggested is None:
             return False, "No road-and-sidewalk draft is ready yet."
         return self.update_fixed_zones(suggested)
+
+    def update_surface_map(self, surfaces: Any) -> tuple[bool, str]:
+        try:
+            validated = validate_surfaces(surfaces)
+        except ValueError as exc:
+            return False, str(exc)
+        with self.lock:
+            save_surfaces(validated)
+            self.surface_map = validated
+            self.surface_map_calibrated = True
+        return True, "Road and sidewalk map saved."
 
     def _reset_primary_truck(self) -> None:
         self.selected_truck_id = None
@@ -705,7 +760,6 @@ class DetectionEngine:
         scene_analysis: dict[str, Any] | None = None,
     ) -> np.ndarray:
         height, width = frame.shape[:2]
-        self._draw_scene_layers(frame, scene_analysis)
         if zones_visible and zones is not None:
             overlay = frame.copy()
             polygons: dict[str, np.ndarray] = {}
@@ -828,6 +882,21 @@ def api_apply_scene_draft():
     if not updated:
         return jsonify({"ok": False, "error": message}), 400
     return jsonify({"ok": True, "message": message, "zones": engine.snapshot()["fixed_zones"]})
+
+
+@app.get("/api/surfaces")
+def api_surfaces():
+    snapshot = engine.snapshot()
+    return jsonify({"surfaces": snapshot["surface_map"], "calibrated": snapshot["surface_map_calibrated"]})
+
+
+@app.post("/api/surfaces")
+def api_update_surfaces():
+    payload = request.get_json(silent=True) or {}
+    updated, message = engine.update_surface_map(payload.get("surfaces"))
+    if not updated:
+        return jsonify({"ok": False, "error": message}), 400
+    return jsonify({"ok": True, "message": message, "surfaces": engine.snapshot()["surface_map"]})
 
 
 @app.post("/api/start")
