@@ -14,6 +14,15 @@ Open PowerShell in this project folder and run:
 
 Then open <http://127.0.0.1:5000>.
 
+If port 5000 is already in use, choose another local port before launching:
+
+```powershell
+$env:APP_PORT = "5001"
+.\start.ps1
+```
+
+Then open <http://127.0.0.1:5001>.
+
 The launcher creates a local Python 3.11 or 3.12 `.venv`, installs the Python packages, and downloads two small model files on first use:
 
 - YOLO: `models/yolo11n.pt`
@@ -96,4 +105,5 @@ The warning zone has priority over pose cues. For example, a person oriented tow
 - Detection quality depends on lighting, occlusion, perspective, video quality, and the pretrained model.
 - Activity labels need several consecutive frames and are less reliable without stable YOLO track IDs.
 - Webcam input is intentionally deferred until uploaded-video mode is proven reliable.
+
 
