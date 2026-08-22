@@ -2,6 +2,16 @@
 
 This file records user-visible and safety-logic changes to the project. Update it whenever the application, detection behavior, zone geometry, warning rules, interface, dependencies, or documentation changes.
 
+## 2026-08-22 — Cross-Platform Setup Documentation
+
+### Changed
+
+- Corrected the README to state that YOLO and MediaPipe model files are excluded from Git rather than bundled in the repository.
+- Added complete Windows and macOS setup commands, including official YOLO and optional MediaPipe model downloads.
+- Recommended Python 3.11 for predictable dependency compatibility and explained offline roadshow preparation.
+- Clarified that `start.bat` is Windows-only and requires `yolo11n.pt` to be downloaded before detection can start.
+- Updated the project introduction to describe all-vehicle pairwise risk evaluation while retaining the large-vehicle blind-spot focus.
+
 ## 2026-08-22 — All-Vehicle Pairwise Collision-Risk Evaluation
 
 ### Changed
