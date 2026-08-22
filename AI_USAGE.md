@@ -1,48 +1,11 @@
 # AI Usage Declaration
 
-This project uses AI tools as assistants. The team remains responsible for the core concept, product decisions, implementation, testing, and presentation, and team members must understand and meaningfully modify all AI-assisted work.
+BlindSpot Guardian uses two local computer-vision components:
 
-## Tools
+- **Ultralytics YOLO 11n** performs the real object detections, labels, confidence values, and available tracking IDs shown in the camera panel. The existing image-space proximity and motion heuristic is the sole authority for warning states and safety timeline events.
+- **MediaPipe Pose Landmarker Lite** optionally produces conservative, display-only observations for one selected real YOLO person crop. It may show likely walking, likely standing, uncertain motion, or a low-confidence head-orientation proxy. It never changes a warning, risk calculation, event, or detection.
 
-### ChatGPT
+The system does not infer pedestrian awareness, intent, real-world speed or distance, driver intention, collision probability, or a calibrated trajectory. If MediaPipe or its model is unavailable, YOLO processing and the warning heuristic continue normally.
 
-Used for:
+No cloud AI service, camera access, remote inference, or uploaded-data service is used by the application. Video processing occurs on the computer running the Flask server.
 
-- Interpreting the competition rules and judging criteria
-- Discussing feasibility, scope, risks, and 36-hour MVP planning
-- Explaining computer-vision concepts and public documentation
-- Identifying possible technical or originality problems
-- Drafting prompts and documentation
-
-### OpenAI Codex
-
-Planned and/or used for:
-
-- Generating code from team-written requirements
-- Debugging and explaining errors
-- Suggesting code structure and implementation alternatives
-- Reviewing code for clarity and reliability
-
-All generated code must be reviewed, tested, understood, and meaningfully modified by the team before submission.
-
-## Team Contribution
-
-The team:
-
-- Selects and owns the final project concept
-- Makes the key design and engineering decisions
-- Integrates, modifies, and tests the implementation
-- Verifies the prototype's behavior and limitations
-- Creates and delivers the final demonstration and presentation
-
-## Limitations and Transparency
-
-AI output may be incomplete or incorrect. The team verifies AI-assisted content and does not present unvalidated prototype behavior as production-ready automotive safety technology.
-
-This document will be updated as AI tools are used during development.
-
-## Usage Log
-
-| Date | Tool | Purpose | Team review or modification |
-| --- | --- | --- | --- |
-| 2026-08-21 | ChatGPT | Rule interpretation, feasibility evaluation, and repository setup guidance | The team reviewed the information and retained control of all project decisions |
