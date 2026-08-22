@@ -7,11 +7,12 @@ BlindSpot Guardian is a 36-hour HHCC 2026 prototype for safer truck turns at ped
 ## What the prototype demonstrates
 
 - Real YOLO inference on uploaded traffic video
-- Detection of `person`, `bicycle`, `motorcycle`, and `truck`
+- Detection of `person`, `bicycle`, `car`, `motorcycle`, `bus`, and `truck`
 - Bounding boxes, confidence values, inference time, and processing FPS
 - A **Fixed Intersection Camera** mode with configurable scene polygons
 - A **Moving-Camera Demo** mode whose zones follow the primary detected truck
-- Warning states: `MONITORING`, truck present/tracked, `CAUTION`, and `DANGER`
+- A bilingual pedestrian warning signal with `SAFE`, `CAUTION`, and `DANGER` states
+- Explainable evidence showing why the current warning state was selected
 - Short multi-frame confirmation and clearing delays to reduce alert flicker
 - Local processing: uploaded videos are removed after processing or reset
 
@@ -101,7 +102,7 @@ For a stationary intersection camera, edit `zones.json`. Every point is `[x, y]`
 - `ROAD_USER_APPROACH_ZONE`: where a person or two-wheeler is approaching
 - `CONFLICT_ZONE`: the higher-risk overlap area
 
-The moving-camera mode is useful for the demo video, but its truck-relative zones are not a substitute for calibrating a real fixed intersection camera.
+The current warning uses an image-space proximity and motion heuristic around the tracked heavy vehicle. It does not display safety polygons or claim calibrated collision prediction.
 
 ## Current limitations
 
