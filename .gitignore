@@ -23,6 +23,7 @@ env/
 # YOLO models and generated data
 *.pt
 *.onnx
+*.task
 input/*
 output/*
 !input/.gitkeep

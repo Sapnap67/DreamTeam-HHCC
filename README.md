@@ -12,6 +12,7 @@ BlindSpot Guardian is an HHCC 2026 prototype for safer heavy-vehicle turns at pe
 - Image-space proximity and short motion-history analysis
 - A bilingual pedestrian signal with `SAFE`, `CAUTION`, and `DANGER` states
 - Explainable evidence showing why the current state was selected
+- MediaPipe pose cues for likely walking/standing and a low-confidence head-orientation proxy
 - Multi-frame confirmation and clearing delays to reduce alert flicker
 - Bounding boxes, confidence values, inference time, and processing FPS
 - A clearly marked signal-test mode that does not alter AI results
@@ -19,12 +20,15 @@ BlindSpot Guardian is an HHCC 2026 prototype for safer heavy-vehicle turns at pe
 
 Cars remain visible as detections but do not trigger the pedestrian warning. Only people, bicycles, and motorcycles are treated as vulnerable road users.
 
+MediaPipe observations are supporting information only. They do not alter the warning state and cannot determine attention, intent, or whether a pedestrian noticed a vehicle.
+
 ## How it works
 
 ```text
 Uploaded video → YOLO detections → short object histories
               → heavy-vehicle/road-user risk evidence
               → warning hysteresis → pedestrian warning signal
+              ↘ MediaPipe observable pose cues (display only)
 ```
 
 The bottom-center of each bounding box is used as an approximate road-contact point. The app compares image-space distance, monitored side, lower safety-margin overlap, decreasing separation, and converging motion. It does not measure real-world distance or speed.
@@ -34,6 +38,7 @@ The bottom-center of each bounding box is used as an approximate road-contact po
 ```text
 blindspot-guardian/
 ├── app.py
+├── behavior.py
 ├── requirements.txt
 ├── start.bat
 ├── static/
@@ -104,6 +109,7 @@ The displayed evidence comes from the backend calculation. No crash probability 
 - A pretrained model may classify an e-bike as a bicycle or motorcycle.
 - Detection and tracking quality depend on lighting, occlusion, perspective, and video quality.
 - Thresholds require testing and calibration for a specific stationary roadside camera.
+- MediaPipe activity and head-orientation labels are coarse visual proxies, not awareness recognition.
 - Uploaded video is supported; a live roadside camera feed is not yet implemented.
 
 ## Responsible AI usage

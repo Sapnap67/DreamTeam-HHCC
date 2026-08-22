@@ -16,11 +16,16 @@ from flask import Flask, Response, jsonify, render_template, request
 from ultralytics import YOLO
 from werkzeug.utils import secure_filename
 
+from behavior import PoseBehaviorAnalyzer, empty_analysis
+
 
 BASE_DIR = Path(__file__).resolve().parent
 INPUT_DIR = BASE_DIR / "input"
 OUTPUT_DIR = BASE_DIR / "output"
 MODEL_PATH = Path(os.environ.get("YOLO_MODEL_PATH", BASE_DIR / "yolo11n.pt"))
+POSE_MODEL_PATH = Path(
+    os.environ.get("MEDIAPIPE_POSE_MODEL_PATH", BASE_DIR / "models" / "pose_landmarker_lite.task")
+)
 ALLOWED_EXTENSIONS = {".mp4", ".mov", ".avi", ".mkv", ".m4v"}
 MAX_UPLOAD_BYTES = 500 * 1024 * 1024
 RELEVANT_CLASSES = {0: "person", 1: "bicycle", 2: "car", 3: "motorcycle", 5: "bus", 7: "truck"}
@@ -84,6 +89,7 @@ class DetectionEngine:
         self.stop_event = threading.Event()
         self.worker: threading.Thread | None = None
         self.model: YOLO | None = None
+        self.pose_analyzer = PoseBehaviorAnalyzer(POSE_MODEL_PATH)
         self.source_path: Path | None = None
         self.frame_number = 0
         self.latest_jpeg = blank_frame()
@@ -118,6 +124,7 @@ class DetectionEngine:
                 "lost_frames": 0,
             },
             "evidence": DetectionEngine._empty_evidence(),
+            "pedestrian_analysis": empty_analysis("WAITING FOR VIDEO"),
         }
 
     @staticmethod
@@ -223,6 +230,7 @@ class DetectionEngine:
         visible_reason = "No meaningful risk evidence"
         previous_frame_time: float | None = None
         fps_ema = 0.0
+        pose_timestamp_ms = 0
         try:
             model = self._load_model()
             capture = cv2.VideoCapture(str(self.source_path))
@@ -271,6 +279,15 @@ class DetectionEngine:
                 primary_truck, primary_status = self._update_primary_heavy_vehicle(detections)
                 raw_state, raw_reason, raw_evidence = self._evaluate_risk(
                     detections, primary_truck, frame.shape[1], frame.shape[0], blind_side
+                )
+
+                pose_timestamp_ms += max(1, round(1000.0 / source_fps)) if source_fps and source_fps > 0 else 33
+                pedestrian_analysis = self.pose_analyzer.analyze(
+                    frame,
+                    detections,
+                    primary_truck,
+                    pose_timestamp_ms,
+                    raw_evidence.get("road_user_class"),
                 )
 
                 if raw_state == "DANGER":
@@ -346,6 +363,7 @@ class DetectionEngine:
                             "error": None,
                             "primary_truck": primary_status,
                             "evidence": raw_evidence,
+                            "pedestrian_analysis": pedestrian_analysis,
                         }
                     )
                     self.frame_ready.notify_all()
@@ -374,6 +392,7 @@ class DetectionEngine:
                     source.unlink(missing_ok=True)
                 except OSError:
                     pass
+            self.pose_analyzer.close()
 
     @staticmethod
     def _extract_detections(result: Any, width: int, height: int) -> list[dict[str, Any]]:
@@ -670,8 +689,14 @@ class DetectionEngine:
                 label += " PRIMARY"
                 if item.get("track_id") is not None:
                     label += f" ID {item['track_id']}"
-            cv2.rectangle(frame, (x1, max(0, y1 - 24)), (x1 + max(120, len(label) * 10), y1), color, -1)
-            cv2.putText(frame, label, (x1 + 5, max(16, y1 - 6)), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (8, 14, 18), 2)
+            behavior = item.get("behavior")
+            cue = f"{behavior['activity']} | {behavior['head_orientation']}" if behavior else ""
+            label_width = max(120, len(label) * 10, len(cue) * 7)
+            label_height = 44 if cue else 24
+            cv2.rectangle(frame, (x1, max(0, y1 - label_height)), (x1 + label_width, y1), color, -1)
+            cv2.putText(frame, label, (x1 + 5, max(16, y1 - (25 if cue else 6))), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (8, 14, 18), 2)
+            if cue:
+                cv2.putText(frame, cue, (x1 + 5, max(16, y1 - 6)), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (8, 14, 18), 1)
 
         if state == "DANGER":
             border = 16 if self.frame_number % 2 == 0 else 7
