@@ -2,6 +2,22 @@
 
 This file records user-visible and safety-logic changes to the project. Update it whenever the application, detection behavior, zone geometry, warning rules, interface, dependencies, or documentation changes.
 
+## 2026-08-22 — Portable Windows One-Click Startup
+
+### Changed
+
+- Removed the launcher dependency on the original developer's hard-coded Codex Python environment.
+- Reworked `start.bat` to locate a supported Python 3.10–3.12 installation, prefer Python 3.11, and create a project-local `.venv`.
+- Added dependency health checks so packages are installed only when the local environment is missing or incomplete.
+- Added automatic first-run download and verification of the required official `yolo11n.pt` weights.
+- Added an automatic best-effort MediaPipe model download while preserving YOLO-only operation if the optional pose model is unavailable.
+- Added clearer numbered startup progress and actionable Python, setup, model-download, and application error messages.
+- Simplified the README to make Windows setup a three-step process and documented recovery for an incomplete `.venv`.
+
+### Added
+
+- Added `download_yolo_model.py` as a reusable, project-relative official-model downloader.
+
 ## 2026-08-22 — Cross-Platform Setup Documentation
 
 ### Changed
