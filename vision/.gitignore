@@ -1,5 +1,7 @@
 .venv/
+.runtime-test/
 .dependency-check*/
+integration-test/
 __pycache__/
 models/*.pt
 models/*.task
