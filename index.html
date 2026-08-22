@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>CrossGuard · 右转盲区预警演示</title>
+  <style>
+    :root{--ink:#16231f;--muted:#68756f;--paper:#f5f5ef;--white:#fff;--line:#d9ddd8;--green:#16a276;--amber:#f5a623;--red:#e94b3c;--road:#555b59;--blue:#3375ee}
+    *{box-sizing:border-box}body{margin:0;background:var(--paper);color:var(--ink);font-family:Inter,"PingFang SC","Microsoft YaHei",Arial,sans-serif}button,input{font:inherit}.app{min-height:100vh;max-width:1440px;margin:auto;padding:22px 28px 36px}.topbar{display:flex;align-items:center;height:48px;border-bottom:1px solid var(--line)}.brand{font-size:21px;font-weight:850;letter-spacing:-.7px}.brand-mark{display:inline-grid;place-items:center;width:27px;height:27px;margin-right:8px;background:var(--ink);color:white;border-radius:8px;font-size:17px}.topbar .mode{margin-left:22px;padding-left:22px;border-left:1px solid var(--line);font-size:11px;color:var(--muted);letter-spacing:.08em}.topbar .event{margin-left:auto;font-size:11px;color:var(--muted)}.hero{display:flex;justify-content:space-between;gap:30px;align-items:end;padding:36px 0 25px}.eyebrow{margin:0 0 9px;font-size:10px;font-weight:750;letter-spacing:.12em;color:var(--green)}h1{margin:0;font-size:clamp(31px,4vw,50px);line-height:1.06;letter-spacing:-.055em}.hero-copy{max-width:630px;margin:12px 0 0;color:var(--muted);font-size:13px;line-height:1.65}.truth-label{flex:0 0 285px;padding:12px 15px;border:1px solid var(--line);border-radius:10px;background:#fafbf8;font-size:11px;line-height:1.5;color:var(--muted)}.truth-label b{display:block;margin-bottom:3px;color:var(--ink)}.workspace{display:grid;grid-template-columns:minmax(0,1fr) 330px;background:var(--white);border:1px solid var(--line);border-radius:18px;overflow:hidden;box-shadow:0 18px 55px rgba(19,34,28,.07)}.viewer{min-width:0;border-right:1px solid var(--line)}.viewer-head,.viewer-foot{height:45px;display:flex;align-items:center;gap:14px;padding:0 16px;color:#75807b;font-size:10px;letter-spacing:.06em}.viewer-head{border-bottom:1px solid var(--line)}.viewer-foot{border-top:1px solid var(--line)}.status-dot{width:7px;height:7px;border-radius:50%;background:var(--green);box-shadow:0 0 0 4px rgba(22,162,118,.12)}.head-spacer{margin-left:auto}.scenario-badge{padding:5px 8px;border:1px solid var(--line);border-radius:6px;color:#56645e}.stage{position:relative;overflow:hidden;aspect-ratio:16/9;background:#cdd2ce}.video{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;display:none;filter:saturate(.75) contrast(.98)}.video.visible{display:block}.fallback{position:absolute;inset:0;background:linear-gradient(155deg,#b8c4bd 0 33%,#747b77 33% 71%,#c2cac4 71%)}.fallback:before{content:"";position:absolute;left:0;right:0;top:56%;height:2px;background:repeating-linear-gradient(90deg,#f2eecf 0 34px,transparent 34px 67px);opacity:.8}.fallback:after{content:"";position:absolute;right:20%;top:0;bottom:0;width:30%;border-left:2px dashed rgba(255,255,255,.38);border-right:2px dashed rgba(255,255,255,.38);transform:skewX(-12deg)}.crosswalk{position:absolute;z-index:2;left:0;right:0;bottom:18%;height:52px;background:repeating-linear-gradient(90deg,rgba(255,255,255,.76) 0 24px,transparent 24px 43px);opacity:.62}.curb{position:absolute;z-index:2;left:0;right:0;bottom:9%;height:8px;background:#dde1db;box-shadow:0 4px #a6aea8}.pole{position:absolute;z-index:6;left:7%;top:13%;width:10px;height:63%;background:#3f4743}.pole:before{content:"";position:absolute;top:0;left:-3px;width:92px;height:8px;background:#3f4743}.camera{position:absolute;z-index:7;left:13%;top:11%;width:34px;height:19px;border-radius:4px;background:#e3e7e4;transform:rotate(8deg);box-shadow:0 2px 5px #2334}.camera:after{content:"";position:absolute;right:-9px;top:5px;border-left:10px solid #e3e7e4;border-top:5px solid transparent;border-bottom:5px solid transparent}.signal{position:absolute;z-index:7;left:10%;top:17%;display:grid;gap:4px;padding:6px;background:#232a27;border-radius:7px}.signal i{width:9px;height:9px;border-radius:50%;background:#56605b}.signal i:last-child{background:#3bcc86;box-shadow:0 0 10px #3bcc86}.truck{position:absolute;z-index:5;left:42%;top:43%;width:26%;height:18%;transform:rotate(-5deg);transition:all .65s ease}.truck .box{position:absolute;left:0;bottom:0;width:69%;height:100%;background:#e7e9e6;border:2px solid #8b9590;border-radius:4px;box-shadow:0 8px 15px #17251e33}.truck .cab{position:absolute;right:0;bottom:0;width:34%;height:72%;background:#245f9f;border-radius:5px 9px 4px 3px}.truck .cab:before{content:"";position:absolute;right:7px;top:8px;width:52%;height:25%;background:#a9cad4;clip-path:polygon(12% 0,100% 0,100% 100%,0 100%)}.truck .wheel{position:absolute;bottom:-7px;width:15px;height:15px;border-radius:50%;background:#242927;border:3px solid #69716d}.truck .w1{left:9%}.truck .w2{left:57%}.truck .w3{right:6%}.truck.turning{left:48%;top:47%;transform:rotate(13deg)}.person{position:absolute;z-index:7;left:74%;bottom:12%;width:19px;height:41px;transition:all .7s linear}.person:before{content:"";position:absolute;left:4px;top:0;width:11px;height:11px;border-radius:50%;background:#202724}.person:after{content:"";position:absolute;left:7px;top:11px;width:6px;height:22px;border-radius:5px;background:#202724;box-shadow:-5px 20px 0 -1px #202724,5px 20px 0 -1px #202724}.person.entering{left:61%;bottom:22%}.blind-zone{position:absolute;z-index:4;left:55%;top:42%;width:30%;height:42%;background:linear-gradient(135deg,rgba(245,166,35,.07),rgba(233,75,60,.27));clip-path:polygon(0 0,44% 7%,100% 100%,3% 76%);border-bottom:2px dashed rgba(233,75,60,.9);opacity:0;transition:opacity .3s}.blind-zone.visible{opacity:1}.blind-zone span{position:absolute;right:8%;bottom:14%;padding:4px 7px;background:rgba(33,37,34,.82);border-radius:4px;color:#fff;font-size:9px;letter-spacing:.08em}.track-box{position:absolute;z-index:8;border:2px solid var(--blue);opacity:0;transition:all .65s ease}.track-box.show{opacity:1}.truck-track{left:41%;top:40%;width:29%;height:23%}.truck-track.turning{left:47%;top:44%;transform:rotate(13deg)}.person-track{left:73%;bottom:10%;width:27px;height:58px;border-color:var(--green)}.person-track.entering{left:60%;bottom:20%}.track-box label{position:absolute;left:-2px;top:-21px;padding:3px 6px;background:currentColor;color:white;font-size:9px;white-space:nowrap}.stage-chip{position:absolute;z-index:12;top:15px;left:15px;padding:7px 10px;border-radius:7px;background:rgba(20,29,25,.82);color:white;font-size:10px;letter-spacing:.04em}.stage-chip b{color:#7ce0bb}.warning{position:absolute;z-index:15;left:50%;bottom:8%;transform:translateX(-50%) translateY(12px);width:min(430px,76%);padding:14px 18px;background:#231d1c;border:2px solid var(--red);border-radius:10px;color:white;display:flex;align-items:center;gap:13px;opacity:0;transition:.25s}.warning.show{opacity:1;transform:translateX(-50%) translateY(0)}.warning-icon{display:grid;place-items:center;flex:0 0 34px;height:34px;border-radius:50%;background:var(--red);font-weight:900}.warning strong{display:block;font-size:16px}.warning small{color:#d7cfcc}.scrim-note{position:absolute;z-index:12;right:14px;top:14px;padding:6px 8px;background:rgba(255,255,255,.84);border-radius:6px;color:#34443d;font-size:9px}.timeline{padding:11px 16px 14px}.timeline-head{display:flex;align-items:center;gap:12px}.timecode{font:700 11px ui-monospace,Consolas,monospace;width:42px}.range{width:100%;accent-color:var(--ink)}.play-controls{display:flex;gap:8px;margin-top:9px}.btn{border:1px solid var(--line);background:white;color:var(--ink);border-radius:7px;padding:8px 12px;font-size:11px;font-weight:700;cursor:pointer}.btn:hover{border-color:#9ca8a2}.btn.primary{background:var(--ink);border-color:var(--ink);color:white}.upload{margin-left:auto}.upload input{display:none}.console{padding:20px;background:#fbfcf9}.console-kicker{font-size:10px;letter-spacing:.1em;color:var(--muted)}.risk{margin:9px 0 18px;padding:16px;border:1px solid var(--line);border-radius:12px;background:white;transition:.25s}.risk-row{display:flex;justify-content:space-between;align-items:center}.risk span{font-size:11px;color:var(--muted)}.risk strong{font-size:25px;color:var(--green);letter-spacing:-.04em}.risk.high{border-color:#f0a39c;background:#fff7f5}.risk.high strong{color:var(--red)}.risk p{margin:8px 0 0;font-size:11px;line-height:1.5;color:#637069}.logic{margin:0;padding:0;list-style:none}.logic li{position:relative;padding:0 0 18px 31px;color:#8a948f;font-size:12px;line-height:1.35}.logic li:before{content:"";position:absolute;left:4px;top:3px;width:10px;height:10px;border:2px solid #bac2be;border-radius:50%;background:#fbfcf9}.logic li:not(:last-child):after{content:"";position:absolute;left:10px;top:15px;bottom:1px;width:1px;background:#d8ddda}.logic li.active{color:var(--ink);font-weight:700}.logic li.active:before{border-color:var(--green);background:var(--green);box-shadow:0 0 0 4px rgba(22,162,118,.11)}.logic li.alert.active:before{border-color:var(--red);background:var(--red);box-shadow:0 0 0 4px rgba(233,75,60,.11)}.logic small{display:block;margin-top:3px;color:#7e8983;font-weight:400}.outputs{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:3px}.output{padding:10px;border:1px solid var(--line);border-radius:9px;background:white}.output span{display:block;margin-bottom:4px;color:var(--muted);font-size:9px;letter-spacing:.06em}.output b{font-size:11px}.output.on{border-color:#ee9f97;background:#fff4f2}.output.on b{color:var(--red)}.disclosure{margin:18px 0 0;padding-top:15px;border-top:1px solid var(--line);color:#7b8781;font-size:10px;line-height:1.55}.footer-copy{margin-left:auto}.pulse{animation:pulse .55s ease-in-out infinite alternate}@keyframes pulse{to{box-shadow:0 0 0 8px rgba(233,75,60,.14)}}@media(max-width:900px){.app{padding:14px}.hero{display:block}.truth-label{margin-top:18px}.workspace{grid-template-columns:1fr}.viewer{border-right:0}.console{border-top:1px solid var(--line)}.topbar .mode{display:none}}
+  </style>
+</head>
+<body>
+<main class="app">
+  <header class="topbar">
+    <div class="brand"><span class="brand-mark">＋</span>CrossGuard</div>
+    <div class="mode">RECORDED SCENARIO REPLAY · 非实时演示</div>
+    <div class="event">HHCC 2026 · DREAM TEAM</div>
+  </header>
+
+  <section class="hero">
+    <div><p class="eyebrow">SAFETY / SMART CITIES</p><h1>让行人在进入盲区前，<br>先看见危险。</h1><p class="hero-copy">安装在信号灯杆上的摄像头识别右转大型车辆与行人位置，预测车辆转弯扫掠区域，并通过路侧声光装置提前预警。</p></div>
+    <div class="truth-label"><b>演示说明 · DEMO DISCLOSURE</b>本页面使用可重复的录制场景与模拟检测坐标，验证“识别—预测—预警”流程；不宣称已完成真实道路部署。</div>
+  </section>
+
+  <section class="workspace">
+    <div class="viewer">
+      <div class="viewer-head"><span class="status-dot"></span><b>CAMERA REPLAY · TL-03</b><span>十字路口东南角</span><span class="head-spacer"></span><span class="scenario-badge">场景 01 / 大货车右转</span></div>
+      <div class="stage" id="stage">
+        <video id="video" class="video" muted playsinline></video>
+        <div id="fallback" class="fallback"></div><div class="crosswalk"></div><div class="curb"></div><div class="pole"></div><div class="camera"></div><div class="signal"><i></i><i></i><i></i></div>
+        <div id="truck" class="truck"><div class="box"></div><div class="cab"></div><div class="wheel w1"></div><div class="wheel w2"></div><div class="wheel w3"></div></div>
+        <div id="person" class="person"></div><div id="zone" class="blind-zone"><span>预测盲区</span></div>
+        <div id="truckTrack" class="track-box truck-track"><label>大型车辆</label></div><div id="personTrack" class="track-box person-track"><label>行人</label></div>
+        <div class="stage-chip">状态：<b id="stageState">等待场景开始</b></div><div class="scrim-note">DEMO REPLAY · 非实时监控</div>
+        <div id="warning" class="warning"><div class="warning-icon pulse">!</div><div><strong>请勿进入右转盲区</strong><small>WARNING · RIGHT-TURNING TRUCK</small></div></div>
+      </div>
+      <div class="timeline">
+        <div class="timeline-head"><span id="timecode" class="timecode">00:00</span><input id="scrubber" class="range" type="range" min="0" max="140" value="0" aria-label="Scenario timeline"></div>
+        <div class="play-controls"><button id="play" class="btn primary">▶ 播放演示</button><button id="restart" class="btn">↻ 重新开始</button><button id="jump" class="btn">跳至预警</button><label class="btn upload">载入录制视频<input id="upload" type="file" accept="video/*"></label></div>
+      </div>
+      <div class="viewer-foot"><span>演示时长 14 秒</span><span class="footer-copy">点击时间轴可逐步讲解，不依赖现场摄像头</span></div>
+    </div>
+
+    <aside class="console">
+      <div class="console-kicker">EXPLAINABLE SAFETY DECISION</div>
+      <div id="risk" class="risk"><div class="risk-row"><span>当前风险</span><strong id="riskLabel">安全</strong></div><p id="riskReason">尚未发现右转冲突</p></div>
+      <ol class="logic">
+        <li id="step1">识别大型车辆<small>摄像头检测车辆所在位置</small></li>
+        <li id="step2">判断右转意图<small>转向轨迹进入路口右侧区域</small></li>
+        <li id="step3">生成盲区范围<small>依据车身尺寸与转弯方向投影</small></li>
+        <li id="step4" class="alert">检测行人路径冲突<small>行人位置与预测盲区发生重叠</small></li>
+      </ol>
+      <div class="outputs"><div id="roadOutput" class="output"><span>路侧提醒</span><b>待机</b></div><div id="driverOutput" class="output"><span>司机提醒</span><b>待机</b></div></div>
+      <p class="disclosure">原型边界：当前页面演示系统逻辑与交互。真实部署仍需车辆/行人检测模型、路口标定、夜间与恶劣天气测试，以及交通管理部门验证。</p>
+    </aside>
+  </section>
+</main>
+<script>
+  const duration=14;
+  const ui={play:document.querySelector('#play'),restart:document.querySelector('#restart'),jump:document.querySelector('#jump'),scrubber:document.querySelector('#scrubber'),timecode:document.querySelector('#timecode'),truck:document.querySelector('#truck'),person:document.querySelector('#person'),zone:document.querySelector('#zone'),truckTrack:document.querySelector('#truckTrack'),personTrack:document.querySelector('#personTrack'),warning:document.querySelector('#warning'),risk:document.querySelector('#risk'),riskLabel:document.querySelector('#riskLabel'),riskReason:document.querySelector('#riskReason'),stageState:document.querySelector('#stageState'),roadOutput:document.querySelector('#roadOutput'),driverOutput:document.querySelector('#driverOutput'),video:document.querySelector('#video'),fallback:document.querySelector('#fallback'),upload:document.querySelector('#upload')};
+  let elapsed=0,playing=false,lastFrame=0,objectUrl=null;
+  const active=(id,on)=>document.querySelector(id).classList.toggle('active',on);
+  function render(t){
+    const truckSeen=t>=2,turnKnown=t>=4,zoneShown=t>=5.5,personMoves=t>=6.5,conflict=t>=8&&t<12.2,resolved=t>=12.2;
+    ui.truckTrack.classList.toggle('show',truckSeen);ui.truck.classList.toggle('turning',turnKnown);ui.truckTrack.classList.toggle('turning',turnKnown);
+    ui.zone.classList.toggle('visible',zoneShown);ui.person.classList.toggle('entering',personMoves);ui.personTrack.classList.toggle('show',t>=6);ui.personTrack.classList.toggle('entering',personMoves);ui.warning.classList.toggle('show',conflict);
+    active('#step1',truckSeen);active('#step2',turnKnown);active('#step3',zoneShown);active('#step4',conflict);
+    ui.risk.classList.toggle('high',conflict);ui.roadOutput.classList.toggle('on',conflict);ui.driverOutput.classList.toggle('on',conflict);
+    ui.riskLabel.textContent=conflict?'危险':'安全';ui.riskReason.textContent=conflict?'行人进入大型车辆右转预测盲区':resolved?'行人已退出危险区域':'尚未发现右转冲突';
+    ui.roadOutput.querySelector('b').textContent=conflict?'红灯闪烁＋语音':'待机';ui.driverOutput.querySelector('b').textContent=conflict?'盲区冲突提醒':'待机';
+    ui.stageState.textContent=conflict?'预警已触发':resolved?'风险解除':zoneShown?'正在检查路径重叠':turnKnown?'已识别右转意图':truckSeen?'已识别大型车辆':'等待场景开始';
+    ui.timecode.textContent='00:'+String(Math.floor(t)).padStart(2,'0');ui.scrubber.value=Math.round(t*10);
+  }
+  function frame(now){if(playing){if(!lastFrame)lastFrame=now;elapsed+=(now-lastFrame)/1000;lastFrame=now;if(elapsed>=duration){elapsed=duration;playing=false;ui.play.textContent='▶ 再次播放'}render(elapsed)}requestAnimationFrame(frame)}
+  function setPlaying(next){playing=next;lastFrame=0;ui.play.textContent=playing?'❚❚ 暂停':'▶ 继续播放'}
+  ui.play.addEventListener('click',()=>{if(elapsed>=duration)elapsed=0;setPlaying(!playing)});
+  ui.restart.addEventListener('click',()=>{setPlaying(false);elapsed=0;render(elapsed);ui.play.textContent='▶ 播放演示'});
+  ui.jump.addEventListener('click',()=>{setPlaying(false);elapsed=8.5;render(elapsed);ui.play.textContent='▶ 继续播放'});
+  ui.scrubber.addEventListener('input',event=>{setPlaying(false);elapsed=Number(event.target.value)/10;render(elapsed);ui.play.textContent='▶ 继续播放'});
+  ui.upload.addEventListener('change',event=>{const file=event.target.files[0];if(!file)return;if(objectUrl)URL.revokeObjectURL(objectUrl);objectUrl=URL.createObjectURL(file);ui.video.src=objectUrl;ui.video.classList.add('visible');ui.fallback.style.opacity='.18';ui.video.play().catch(()=>{});});
+  render(0);requestAnimationFrame(frame);
+</script>
+</body>
+</html>
+
