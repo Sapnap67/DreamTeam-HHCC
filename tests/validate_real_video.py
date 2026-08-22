@@ -45,6 +45,7 @@ def main() -> None:
         time.sleep(0.05)
     if engine.worker is not None:
         engine.worker.join(timeout=5.0)
+    temporary.unlink(missing_ok=True)
     elapsed = time.perf_counter() - started_at
     final = engine.snapshot()
     output = {
