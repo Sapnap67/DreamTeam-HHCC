@@ -1,6 +1,6 @@
 # BlindSpot Guardian
 
-BlindSpot Guardian is a 36-hour HHCC 2026 prototype for exploring truck and road-user proximity in traffic video. It applies real YOLO detections and an image-space motion heuristic to show an understandable potential-collision-risk warning.
+BlindSpot Guardian is a 36-hour HHCC 2026 prototype for exploring vehicle and vulnerable-road-user proximity in traffic video, with particular attention to large-vehicle blind spots. It applies real YOLO detections and an image-space motion heuristic to show an understandable potential-collision-risk warning.
 
 > **Prototype only — not for road use.** This is a prototype image-space proximity and motion heuristic, not accurate crash prediction or a certified safety system.
 
@@ -16,37 +16,58 @@ BlindSpot Guardian is a 36-hour HHCC 2026 prototype for exploring truck and road
 
 ## Setup
 
-Python 3.10 or newer is recommended.
+Use **Python 3.11** for the most predictable Windows and macOS dependency compatibility.
 
-### Easy Windows startup
+The pretrained model files are **not stored in this repository**. They are downloaded from their official providers and ignored by Git:
 
-Double-click `start.bat`. On this computer it reuses the existing YOLO Python environment. On a new Windows computer, its first run creates `.venv`, installs `requirements.txt`, and then starts the application. It also opens <http://127.0.0.1:5000> automatically.
-
-Keep the command window open while using BlindSpot Guardian. Press `Ctrl+C` in that window to stop it.
-
-To enable the optional pedestrian-observation card, double-click `download_pose_model.bat` once. It downloads the official MediaPipe Pose Landmarker Lite task file over HTTPS into the ignored local `models` folder. If MediaPipe or the model is missing, the interface says it is unavailable and the YOLO warning system keeps working.
+- `yolo11n.pt` is required for YOLO detection.
+- `models/pose_landmarker_lite.task` is optional. Without it, YOLO warnings still work and the pedestrian-observation card reports that MediaPipe is unavailable.
 
 ### Windows (PowerShell)
 
 ```powershell
-cd "path\to\blindspot-guardian"
-py -m venv .venv
+cd "path\to\DreamTeam-HHCC"
+
+py -3.11 -m venv .venv
 .\.venv\Scripts\Activate.ps1
+
+python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
+
+python -c "from ultralytics import YOLO; YOLO('yolo11n.pt')"
+python download_pose_model.py
+
 python app.py
 ```
+
+Open <http://127.0.0.1:5000>. Keep PowerShell open and press `Ctrl+C` to stop.
+
+After this first-time setup, Windows users can normally double-click `start.bat`. If `yolo11n.pt` is missing, the launcher intentionally stops instead of pretending that detection is available. Run the YOLO download command above, then start it again.
+
+The MediaPipe model is optional. Windows users may run `download_pose_model.bat` instead of the Python downloader.
 
 ### macOS (Terminal)
 
+Install Python 3.11 first if `python3.11` is unavailable, then run:
+
 ```bash
-cd "/path/to/blindspot-guardian"
-python3 -m venv .venv
+cd "/path/to/DreamTeam-HHCC"
+
+python3.11 -m venv .venv
 source .venv/bin/activate
+
+python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
+
+python -c "from ultralytics import YOLO; YOLO('yolo11n.pt')"
+python download_pose_model.py
+
 python app.py
 ```
 
-Open <http://127.0.0.1:5000>. Press `Ctrl+C` to stop. The included `yolo11n.pt` is used by default. If the model is elsewhere, set `YOLO_MODEL_PATH` to its full path before running the app.
+Open <http://127.0.0.1:5000>. Keep Terminal open and press `Control+C` to stop.
+
+The application uses CPU inference for portability. The first setup requires internet access to install dependencies and download models; download everything before the roadshow so the demonstration can run offline.
 
 ## Demo
 
