@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import atexit
 import importlib.util
-import json
 import os
 import threading
 import time
 import uuid
+from collections import deque
 from pathlib import Path
 from typing import Any
 
@@ -20,67 +20,52 @@ from werkzeug.utils import secure_filename
 BASE_DIR = Path(__file__).resolve().parent
 INPUT_DIR = BASE_DIR / "input"
 OUTPUT_DIR = BASE_DIR / "output"
-ZONES_PATH = BASE_DIR / "zones.json"
 MODEL_PATH = Path(os.environ.get("YOLO_MODEL_PATH", BASE_DIR / "yolo11n.pt"))
 ALLOWED_EXTENSIONS = {".mp4", ".mov", ".avi", ".mkv", ".m4v"}
 MAX_UPLOAD_BYTES = 500 * 1024 * 1024
-RELEVANT_CLASSES = {0: "person", 1: "bicycle", 3: "motorcycle", 7: "truck"}
-ZONE_MODE_FIXED = "fixed"
-ZONE_MODE_MOVING = "moving"
-ZONE_MODE_LABELS = {
-    ZONE_MODE_FIXED: "FIXED INTERSECTION CAMERA",
-    ZONE_MODE_MOVING: "MOVING-CAMERA DEMO",
-}
+RELEVANT_CLASSES = {0: "person", 1: "bicycle", 2: "car", 3: "motorcycle", 5: "bus", 7: "truck"}
 BLIND_SIDES = {"right", "left"}
 SMOOTHING_ALPHA = 0.25
 MAX_TRUCK_LOST_FRAMES = 5
 YOLO_TRACKING_AVAILABLE = importlib.util.find_spec("lap") is not None
 
-# Dynamic-zone dimensions are expressed as multiples of the smoothed truck size.
-TRUCK_ZONE_PAD_WIDTH = 0.18
-TRUCK_ZONE_PAD_HEIGHT = 0.14
-CONFLICT_NEAR_GAP_WIDTH = 0.02
-CONFLICT_OUTWARD_WIDTH = 0.55
-CONFLICT_NEAR_TOP_HEIGHT = 0.20
-CONFLICT_NEAR_BOTTOM_HEIGHT = 1.00
-CONFLICT_OUTER_TOP_HEIGHT = 0.30
-CONFLICT_OUTER_BOTTOM_HEIGHT = 0.95
-APPROACH_OUTWARD_WIDTH = 0.75
-APPROACH_OUTER_TOP_HEIGHT = 0.12
-APPROACH_OUTER_BOTTOM_HEIGHT = 1.12
-MOVING_CONFLICT_OPACITY = 0.14
-MOVING_APPROACH_OPACITY = 0.09
-ZONE_OUTLINE_WIDTH = 2
+# Image-space motion tracking and risk configuration.
+POSITION_SMOOTHING_ALPHA = 0.35
+TRACK_HISTORY_LENGTH = 8
+MIN_MOTION_HISTORY = 4
+STALE_TRACK_FRAMES = 12
+FALLBACK_MIN_IOU = 0.08
+FALLBACK_MAX_CENTER_DISTANCE = 0.10
+TRUCK_LOWER_START = 0.38
+TRUCK_FORWARD_MARGIN_WIDTH = 0.30
+TRUCK_BLIND_MARGIN_WIDTH = 0.55
+TRUCK_REAR_MARGIN_WIDTH = 0.12
+TRUCK_MARGIN_DEPTH_HEIGHT = 0.35
+ROAD_USER_MARGIN_RATIO = 0.08
+MIN_CLOSE_DISTANCE = 0.07
+CLOSE_DISTANCE_TRUCK_WIDTH = 0.85
+CAUTION_DISTANCE_HEAVY_WIDTH = 1.40
+EXTREME_DISTANCE_HEAVY_WIDTH = 0.60
+DISTANCE_CLOSING_EPSILON = 0.0025
+PATH_LOOKAHEAD_FRAMES = 8.0
+PATH_CONVERGENCE_GAIN = 0.012
+DANGER_REQUIRED_FRAMES = 4
+DANGER_CLEAR_FRAMES = 6
+CAUTION_REQUIRED_FRAMES = 2
+CAUTION_CLEAR_FRAMES = 3
 CLASS_COLORS = {
     "person": (86, 220, 255),
     "bicycle": (102, 236, 161),
+    "car": (214, 132, 255),
     "motorcycle": (107, 179, 255),
     "truck": (255, 167, 70),
-}
-ZONE_COLORS = {
-    "TRUCK_TURN_ZONE": (255, 225, 70),
-    "ROAD_USER_APPROACH_ZONE": (45, 178, 255),
-    "CONFLICT_ZONE": (55, 55, 255),
+    "bus": (255, 151, 55),
 }
 
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = MAX_UPLOAD_BYTES
 INPUT_DIR.mkdir(exist_ok=True)
 OUTPUT_DIR.mkdir(exist_ok=True)
-
-
-def load_zones() -> dict[str, list[list[float]]]:
-    with ZONES_PATH.open("r", encoding="utf-8") as handle:
-        zones = json.load(handle)
-    required = {"TRUCK_TURN_ZONE", "ROAD_USER_APPROACH_ZONE", "CONFLICT_ZONE"}
-    if set(zones) != required:
-        raise ValueError(f"zones.json must contain exactly: {', '.join(sorted(required))}")
-    for name, points in zones.items():
-        if len(points) < 3 or any(len(point) != 2 for point in points):
-            raise ValueError(f"{name} must contain at least three [x, y] points")
-        if any(not 0 <= value <= 1 for point in points for value in point):
-            raise ValueError(f"{name} coordinates must be normalized between 0 and 1")
-    return zones
 
 
 def blank_frame(message: str = "Upload a video to begin real YOLO processing") -> bytes:
@@ -102,15 +87,15 @@ class DetectionEngine:
         self.source_path: Path | None = None
         self.frame_number = 0
         self.latest_jpeg = blank_frame()
-        self.zone_mode = ZONE_MODE_MOVING
         self.blind_side = "right"
-        self.zones_visible = True
         self.reset_tracking_requested = False
         self.warning_reset_requested = False
         self.selected_truck_id: int | None = None
+        self.selected_truck_key: str | None = None
         self.smoothed_truck_box: np.ndarray | None = None
-        self.last_dynamic_zones: dict[str, list[list[float]]] | None = None
         self.truck_lost_frames = 0
+        self.motion_tracks: dict[str, dict[str, Any]] = {}
+        self.next_fallback_track_id = 1
         self.status: dict[str, Any] = self._initial_status()
 
     @staticmethod
@@ -118,6 +103,7 @@ class DetectionEngine:
         return {
             "running": False,
             "state": "MONITORING",
+            "state_label": "MONITORING",
             "action": "Upload a video and start processing.",
             "fps": 0.0,
             "inference_ms": 0.0,
@@ -125,14 +111,33 @@ class DetectionEngine:
             "frame_index": 0,
             "error": None,
             "source_name": None,
-            "zones_active": False,
-            "zone_polygons": None,
             "primary_truck": {
                 "status": "NOT DETECTED",
                 "confidence": None,
                 "track_id": None,
                 "lost_frames": 0,
             },
+            "evidence": DetectionEngine._empty_evidence(),
+        }
+
+    @staticmethod
+    def _empty_evidence() -> dict[str, Any]:
+        return {
+            "heavy_vehicle_detected": False,
+            "vulnerable_road_user_detected": False,
+            "road_user_on_monitored_side": False,
+            "road_user_within_caution_distance": False,
+            "distance_decreasing": False,
+            "motion_paths_converging": False,
+            "expanded_margin_overlap": False,
+            "motion_history_ready": False,
+            "risk_sustained_frames": 0,
+            "risk_sustained": False,
+            "caution_persistence_frames": 0,
+            "caution_required_frames": CAUTION_REQUIRED_FRAMES,
+            "danger_persistence_frames": 0,
+            "danger_required_frames": DANGER_REQUIRED_FRAMES,
+            "road_user_class": None,
         }
 
     def snapshot(self) -> dict[str, Any]:
@@ -140,10 +145,7 @@ class DetectionEngine:
             snapshot = dict(self.status)
             snapshot.update(
                 {
-                    "zone_mode": self.zone_mode,
-                    "zone_mode_label": ZONE_MODE_LABELS[self.zone_mode],
                     "blind_side": self.blind_side,
-                    "zones_visible": self.zones_visible,
                     "tracking_available": YOLO_TRACKING_AVAILABLE,
                 }
             )
@@ -151,30 +153,24 @@ class DetectionEngine:
 
     def update_settings(self, payload: dict[str, Any]) -> tuple[bool, str]:
         with self.lock:
-            mode = payload.get("zone_mode", self.zone_mode)
             blind_side = payload.get("blind_side", self.blind_side)
-            zones_visible = payload.get("zones_visible", self.zones_visible)
-            if mode not in ZONE_MODE_LABELS:
-                return False, "Unknown zone mode."
             if blind_side not in BLIND_SIDES:
                 return False, "Blind side must be right or left."
-            if not isinstance(zones_visible, bool):
-                return False, "Zone visibility must be true or false."
-            if mode != self.zone_mode:
+            if blind_side != self.blind_side:
                 self.warning_reset_requested = True
-            self.zone_mode = mode
             self.blind_side = blind_side
-            self.zones_visible = zones_visible
             if payload.get("reset_tracking") is True:
                 self.reset_tracking_requested = True
                 self.warning_reset_requested = True
-            return True, "Zone settings updated."
+            return True, "Risk-tracking settings updated."
 
     def _reset_primary_truck(self) -> None:
         self.selected_truck_id = None
+        self.selected_truck_key = None
         self.smoothed_truck_box = None
-        self.last_dynamic_zones = None
         self.truck_lost_frames = 0
+        self.motion_tracks.clear()
+        self.next_fallback_track_id = 1
 
     def _reset_yolo_tracker(self) -> None:
         predictor = getattr(self.model, "predictor", None)
@@ -221,12 +217,13 @@ class DetectionEngine:
     def _process_video(self) -> None:
         capture: cv2.VideoCapture | None = None
         danger_frames = 0
+        caution_frames = 0
         safe_frames = 0
         visible_state = "MONITORING"
+        visible_reason = "No meaningful risk evidence"
         previous_frame_time: float | None = None
         fps_ema = 0.0
         try:
-            fixed_zones = load_zones()
             model = self._load_model()
             capture = cv2.VideoCapture(str(self.source_path))
             if not capture.isOpened():
@@ -263,42 +260,65 @@ class DetectionEngine:
                         self.reset_tracking_requested = False
                     if self.warning_reset_requested:
                         danger_frames = 0
+                        caution_frames = 0
                         safe_frames = 0
                         visible_state = "MONITORING"
+                        visible_reason = "Risk tracking reset"
                         self.warning_reset_requested = False
-                    zone_mode = self.zone_mode
                     blind_side = self.blind_side
-                    zones_visible = self.zones_visible
 
-                primary_truck, dynamic_zones, primary_status = self._update_primary_truck(
-                    detections, frame.shape[1], frame.shape[0], blind_side
+                self._update_motion_tracks(detections, frame.shape[1], frame.shape[0])
+                primary_truck, primary_status = self._update_primary_heavy_vehicle(detections)
+                raw_state, raw_reason, raw_evidence = self._evaluate_risk(
+                    detections, primary_truck, frame.shape[1], frame.shape[0], blind_side
                 )
-                active_zones = fixed_zones if zone_mode == ZONE_MODE_FIXED else dynamic_zones
-                raw_state = self._raw_warning_state(detections, active_zones, zone_mode, primary_truck)
 
                 if raw_state == "DANGER":
                     danger_frames += 1
+                    caution_frames += 1
                     safe_frames = 0
-                    if danger_frames >= 3:
+                    if danger_frames >= DANGER_REQUIRED_FRAMES:
                         visible_state = "DANGER"
-                else:
+                        visible_reason = raw_reason
+                    elif visible_state != "DANGER" and caution_frames >= CAUTION_REQUIRED_FRAMES:
+                        visible_state = "CAUTION"
+                        visible_reason = raw_reason
+                elif raw_state == "CAUTION":
                     danger_frames = 0
+                    caution_frames += 1
                     if visible_state == "DANGER":
                         safe_frames += 1
-                        if safe_frames >= 5:
+                        if safe_frames >= DANGER_CLEAR_FRAMES:
+                            visible_state = "CAUTION"
+                            visible_reason = raw_reason
+                            safe_frames = 0
+                    elif caution_frames >= CAUTION_REQUIRED_FRAMES:
+                        visible_state = "CAUTION"
+                        visible_reason = raw_reason
+                else:
+                    danger_frames = 0
+                    caution_frames = 0
+                    if visible_state in {"DANGER", "CAUTION"}:
+                        safe_frames += 1
+                        clear_frames = DANGER_CLEAR_FRAMES if visible_state == "DANGER" else CAUTION_CLEAR_FRAMES
+                        if safe_frames >= clear_frames:
                             visible_state = raw_state
+                            visible_reason = raw_reason
                             safe_frames = 0
                     else:
                         visible_state = raw_state
+                        visible_reason = raw_reason
+
+                raw_evidence["risk_sustained_frames"] = danger_frames
+                raw_evidence["risk_sustained"] = visible_state == "DANGER"
+                raw_evidence["caution_persistence_frames"] = min(caution_frames, CAUTION_REQUIRED_FRAMES)
+                raw_evidence["danger_persistence_frames"] = min(danger_frames, DANGER_REQUIRED_FRAMES)
 
                 annotated = self._draw_frame(
                     frame,
                     detections,
-                    active_zones,
                     visible_state,
-                    zone_mode,
                     primary_truck,
-                    zones_visible,
                 )
                 encode_ok, encoded = cv2.imencode(".jpg", annotated, [cv2.IMWRITE_JPEG_QUALITY, 84])
                 if not encode_ok:
@@ -317,15 +337,15 @@ class DetectionEngine:
                         {
                             "running": True,
                             "state": visible_state,
-                            "action": self._action_for(visible_state, zone_mode),
+                            "state_label": self._state_label(visible_state),
+                            "action": visible_reason,
                             "fps": round(fps_ema, 1),
                             "inference_ms": round(inference_ms, 1),
                             "detections": detections,
                             "frame_index": self.frame_number,
                             "error": None,
                             "primary_truck": primary_status,
-                            "zones_active": bool(zones_visible and active_zones),
-                            "zone_polygons": active_zones,
+                            "evidence": raw_evidence,
                         }
                     )
                     self.frame_ready.notify_all()
@@ -384,48 +404,119 @@ class DetectionEngine:
         x1, y1, x2, y2 = item["box"]
         return max(0.0, x2 - x1) * max(0.0, y2 - y1)
 
-    def _update_primary_truck(
+    @staticmethod
+    def _box_iou(first: list[float], second: list[float]) -> float:
+        ax1, ay1, ax2, ay2 = first
+        bx1, by1, bx2, by2 = second
+        intersection = max(0.0, min(ax2, bx2) - max(ax1, bx1)) * max(0.0, min(ay2, by2) - max(ay1, by1))
+        union = max(0.0, ax2 - ax1) * max(0.0, ay2 - ay1) + max(0.0, bx2 - bx1) * max(0.0, by2 - by1) - intersection
+        return intersection / union if union > 0 else 0.0
+
+    @staticmethod
+    def _center(box: list[float], width: int, height: int) -> np.ndarray:
+        x1, y1, x2, y2 = box
+        return np.asarray([((x1 + x2) / 2.0) / width, ((y1 + y2) / 2.0) / height], dtype=np.float32)
+
+    def _update_motion_tracks(self, detections: list[dict[str, Any]], width: int, height: int) -> None:
+        used_fallback_keys: set[str] = set()
+        for item in detections:
+            track_id = item.get("track_id")
+            if track_id is not None:
+                key = f"yolo:{item['class']}:{track_id}"
+            else:
+                center = self._center(item["box"], width, height)
+                candidates: list[tuple[float, str]] = []
+                for candidate_key, track in self.motion_tracks.items():
+                    if not candidate_key.startswith("local:") or candidate_key in used_fallback_keys:
+                        continue
+                    if track["class"] != item["class"] or self.frame_number - track["last_frame"] > STALE_TRACK_FRAMES:
+                        continue
+                    iou = self._box_iou(item["box"], track["box"])
+                    distance = float(np.linalg.norm(center - track["center"]))
+                    if iou >= FALLBACK_MIN_IOU or distance <= FALLBACK_MAX_CENTER_DISTANCE:
+                        candidates.append((2.0 * iou - distance, candidate_key))
+                if candidates:
+                    key = max(candidates)[1]
+                else:
+                    key = f"local:{self.next_fallback_track_id}"
+                    self.next_fallback_track_id += 1
+                used_fallback_keys.add(key)
+
+            contact = np.asarray(item["contact"], dtype=np.float32)
+            center = self._center(item["box"], width, height)
+            track = self.motion_tracks.get(key)
+            if track is None:
+                track = {
+                    "class": item["class"],
+                    "box": list(item["box"]),
+                    "center": center,
+                    "smoothed_contact": contact,
+                    "history": deque(maxlen=TRACK_HISTORY_LENGTH),
+                    "last_frame": self.frame_number,
+                }
+                self.motion_tracks[key] = track
+            else:
+                track["smoothed_contact"] = (
+                    POSITION_SMOOTHING_ALPHA * contact
+                    + (1.0 - POSITION_SMOOTHING_ALPHA) * track["smoothed_contact"]
+                )
+                track["center"] = center
+                track["box"] = list(item["box"])
+                track["last_frame"] = self.frame_number
+            track["history"].append((self.frame_number, track["smoothed_contact"].copy()))
+            item["motion_track_key"] = key
+            item["smoothed_contact"] = [float(value) for value in track["smoothed_contact"]]
+
+        stale_keys = [
+            key for key, track in self.motion_tracks.items()
+            if self.frame_number - track["last_frame"] > STALE_TRACK_FRAMES
+        ]
+        for key in stale_keys:
+            self.motion_tracks.pop(key, None)
+            if key == self.selected_truck_key:
+                self.selected_truck_key = None
+
+    def _motion(self, item: dict[str, Any]) -> tuple[np.ndarray, int]:
+        track = self.motion_tracks.get(item.get("motion_track_key", ""))
+        if track is None or len(track["history"]) < MIN_MOTION_HISTORY:
+            return np.zeros(2, dtype=np.float32), 0
+        oldest_frame, oldest = track["history"][0]
+        newest_frame, newest = track["history"][-1]
+        span = max(newest_frame - oldest_frame, 1)
+        return (newest - oldest) / span, len(track["history"])
+
+    def _update_primary_heavy_vehicle(
         self,
         detections: list[dict[str, Any]],
-        frame_width: int,
-        frame_height: int,
-        blind_side: str,
-    ) -> tuple[dict[str, Any] | None, dict[str, list[list[float]]] | None, dict[str, Any]]:
-        trucks = [item for item in detections if item["class"] == "truck"]
-        for item in trucks:
+    ) -> tuple[dict[str, Any] | None, dict[str, Any]]:
+        heavy_vehicles = [item for item in detections if item["class"] in {"truck", "bus"}]
+        for item in heavy_vehicles:
             item["is_primary"] = False
 
         primary: dict[str, Any] | None = None
-        if self.selected_truck_id is not None:
-            primary = next((item for item in trucks if item.get("track_id") == self.selected_truck_id), None)
-        if primary is None and trucks:
-            primary = max(trucks, key=self._box_area)
+        if self.selected_truck_key is not None:
+            primary = next((item for item in heavy_vehicles if item.get("motion_track_key") == self.selected_truck_key), None)
+        if primary is None and heavy_vehicles:
+            primary = max(heavy_vehicles, key=self._box_area)
 
         if primary is None:
             self.truck_lost_frames += 1
-            if self.last_dynamic_zones is not None and self.truck_lost_frames <= MAX_TRUCK_LOST_FRAMES:
-                return (
-                    None,
-                    self.last_dynamic_zones,
-                    {
-                        "status": f"TEMPORARILY LOST ({self.truck_lost_frames}/{MAX_TRUCK_LOST_FRAMES})",
-                        "confidence": None,
-                        "track_id": self.selected_truck_id,
-                        "lost_frames": self.truck_lost_frames,
-                    },
-                )
-            self.last_dynamic_zones = None
+            if self.smoothed_truck_box is not None and self.truck_lost_frames <= MAX_TRUCK_LOST_FRAMES:
+                return None, {
+                    "status": f"TEMPORARILY LOST ({self.truck_lost_frames}/{MAX_TRUCK_LOST_FRAMES})",
+                    "confidence": None,
+                    "track_id": self.selected_truck_id,
+                    "lost_frames": self.truck_lost_frames,
+                }
             self.smoothed_truck_box = None
             self.selected_truck_id = None
-            return None, None, {"status": "NOT DETECTED", "confidence": None, "track_id": None, "lost_frames": self.truck_lost_frames}
+            self.selected_truck_key = None
+            return None, {"status": "NOT DETECTED", "confidence": None, "track_id": None, "lost_frames": self.truck_lost_frames}
 
         primary["is_primary"] = True
         current_track_id = primary.get("track_id")
-        track_changed = (
-            current_track_id is not None
-            and self.selected_truck_id is not None
-            and current_track_id != self.selected_truck_id
-        )
+        current_track_key = primary.get("motion_track_key")
+        track_changed = self.selected_truck_key is not None and current_track_key != self.selected_truck_key
         detected_box = np.asarray(primary["box"], dtype=np.float32)
         if self.smoothed_truck_box is None or track_changed:
             self.smoothed_truck_box = detected_box
@@ -434,15 +525,12 @@ class DetectionEngine:
                 SMOOTHING_ALPHA * detected_box + (1.0 - SMOOTHING_ALPHA) * self.smoothed_truck_box
             )
         self.selected_truck_id = current_track_id
+        self.selected_truck_key = current_track_key
         self.truck_lost_frames = 0
-        self.last_dynamic_zones = self._dynamic_zones(
-            self.smoothed_truck_box, frame_width, frame_height, blind_side
-        )
         return (
             primary,
-            self.last_dynamic_zones,
             {
-                "status": "TRACKED",
+                "status": f"TRACKED {primary['class'].upper()}",
                 "confidence": primary["confidence"],
                 "track_id": current_track_id,
                 "lost_frames": 0,
@@ -450,158 +538,129 @@ class DetectionEngine:
             },
         )
 
-    @staticmethod
-    def _dynamic_zones(
-        smoothed_box: np.ndarray,
-        frame_width: int,
-        frame_height: int,
-        blind_side: str,
-    ) -> dict[str, list[list[float]]]:
-        x1, y1, x2, y2 = [float(value) for value in smoothed_box]
-        truck_width = max(x2 - x1, 1.0)
-        truck_height = max(y2 - y1, 1.0)
-        direction = 1.0 if blind_side == "right" else -1.0
-        side_edge = x2 if direction > 0 else x1
-
-        def normalized(x: float, y: float) -> list[float]:
-            clipped_x = min(max(x, 0.0), float(frame_width - 1))
-            clipped_y = min(max(y, 0.0), float(frame_height - 1))
-            return [clipped_x / frame_width, clipped_y / frame_height]
-
-        truck_zone = [
-            normalized(x1 - TRUCK_ZONE_PAD_WIDTH * truck_width, y1 - TRUCK_ZONE_PAD_HEIGHT * truck_height),
-            normalized(x2 + TRUCK_ZONE_PAD_WIDTH * truck_width, y1 - TRUCK_ZONE_PAD_HEIGHT * truck_height),
-            normalized(x2 + TRUCK_ZONE_PAD_WIDTH * truck_width, y2 + TRUCK_ZONE_PAD_HEIGHT * truck_height),
-            normalized(x1 - TRUCK_ZONE_PAD_WIDTH * truck_width, y2 + TRUCK_ZONE_PAD_HEIGHT * truck_height),
-        ]
-        conflict_near_x = side_edge + direction * CONFLICT_NEAR_GAP_WIDTH * truck_width
-        conflict_outer_x = conflict_near_x + direction * CONFLICT_OUTWARD_WIDTH * truck_width
-        approach_outer_x = conflict_outer_x + direction * APPROACH_OUTWARD_WIDTH * truck_width
-
-        conflict_outer_top = y1 + CONFLICT_OUTER_TOP_HEIGHT * truck_height
-        conflict_outer_bottom = y1 + CONFLICT_OUTER_BOTTOM_HEIGHT * truck_height
-        conflict_zone = [
-            normalized(conflict_near_x, y1 + CONFLICT_NEAR_TOP_HEIGHT * truck_height),
-            normalized(conflict_outer_x, conflict_outer_top),
-            normalized(conflict_outer_x, conflict_outer_bottom),
-            normalized(conflict_near_x, y1 + CONFLICT_NEAR_BOTTOM_HEIGHT * truck_height),
-        ]
-        approach_zone = [
-            normalized(conflict_outer_x, conflict_outer_top),
-            normalized(approach_outer_x, y1 + APPROACH_OUTER_TOP_HEIGHT * truck_height),
-            normalized(approach_outer_x, y1 + APPROACH_OUTER_BOTTOM_HEIGHT * truck_height),
-            normalized(conflict_outer_x, conflict_outer_bottom),
-        ]
-        return {
-            "TRUCK_TURN_ZONE": truck_zone,
-            "ROAD_USER_APPROACH_ZONE": approach_zone,
-            "CONFLICT_ZONE": conflict_zone,
-        }
-
-    @staticmethod
-    def _inside(point: list[float], polygon: list[list[float]]) -> bool:
-        contour = np.asarray(polygon, dtype=np.float32)
-        return cv2.pointPolygonTest(contour, (float(point[0]), float(point[1])), False) >= 0
-
-    def _raw_warning_state(
+    def _evaluate_risk(
         self,
         detections: list[dict[str, Any]],
-        zones: dict[str, list[list[float]]] | None,
-        zone_mode: str,
         primary_truck: dict[str, Any] | None,
-    ) -> str:
-        if zones is None:
-            return "MONITORING"
-        if zone_mode == ZONE_MODE_MOVING:
-            if primary_truck is None:
-                return "MONITORING"
-            road_users = [item for item in detections if item["class"] in {"person", "bicycle", "motorcycle"}]
-            if any(self._inside(item["contact"], zones["CONFLICT_ZONE"]) for item in road_users):
-                return "DANGER"
-            if any(self._inside(item["contact"], zones["ROAD_USER_APPROACH_ZONE"]) for item in road_users):
-                return "CAUTION"
-            return "TRUCK TRACKED"
+        width: int,
+        height: int,
+        blind_side: str,
+    ) -> tuple[str, str, dict[str, Any]]:
+        evidence = self._empty_evidence()
+        if primary_truck is None or self.smoothed_truck_box is None:
+            return "MONITORING", "Waiting for a real heavy-vehicle detection", evidence
 
-        truck_present = any(
-            item["class"] == "truck" and self._inside(item["contact"], zones["TRUCK_TURN_ZONE"])
-            for item in detections
-        )
-        if not truck_present:
-            return "MONITORING"
-        road_users = [item for item in detections if item["class"] in {"person", "bicycle", "motorcycle"}]
-        if any(self._inside(item["contact"], zones["CONFLICT_ZONE"]) for item in road_users):
-            return "DANGER"
-        if any(self._inside(item["contact"], zones["ROAD_USER_APPROACH_ZONE"]) for item in road_users):
-            return "CAUTION"
-        return "TRUCK PRESENT"
+        evidence["heavy_vehicle_detected"] = True
+
+        truck_motion, truck_history = self._motion(primary_truck)
+        truck_contact = np.asarray(primary_truck.get("smoothed_contact", primary_truck["contact"]), dtype=np.float32)
+        tx1, ty1, tx2, ty2 = [float(value) for value in self.smoothed_truck_box]
+        truck_width = max(tx2 - tx1, 1.0)
+        truck_height = max(ty2 - ty1, 1.0)
+        if blind_side == "right":
+            margin_x1 = tx1 - TRUCK_REAR_MARGIN_WIDTH * truck_width
+            margin_x2 = tx2 + TRUCK_BLIND_MARGIN_WIDTH * truck_width
+        else:
+            margin_x1 = tx1 - TRUCK_BLIND_MARGIN_WIDTH * truck_width
+            margin_x2 = tx2 + TRUCK_REAR_MARGIN_WIDTH * truck_width
+        margin_y1 = ty1 + TRUCK_LOWER_START * truck_height
+        margin_y2 = ty2 + TRUCK_MARGIN_DEPTH_HEIGHT * truck_height
+
+        best_state = "VEHICLE TRACKED"
+        best_reason = f"{primary_truck['class'].capitalize()} tracked; no vulnerable road user nearby"
+        road_users = [
+            item for item in detections
+            if item is not primary_truck and item["class"] in {"person", "bicycle", "motorcycle"}
+        ]
+        evidence["vulnerable_road_user_detected"] = bool(road_users)
+        closest_distance = float("inf")
+        for item in road_users:
+            road_motion, road_history = self._motion(item)
+            road_contact = np.asarray(item.get("smoothed_contact", item["contact"]), dtype=np.float32)
+            relative = road_contact - truck_contact
+            distance = float(np.linalg.norm(relative))
+            close_limit = max(MIN_CLOSE_DISTANCE, CLOSE_DISTANCE_TRUCK_WIDTH * truck_width / width)
+            close = distance <= close_limit
+            caution_limit = CAUTION_DISTANCE_HEAVY_WIDTH * truck_width / width
+            within_caution_distance = distance <= caution_limit
+            extremely_close = distance <= EXTREME_DISTANCE_HEAVY_WIDTH * truck_width / width
+
+            rx1, ry1, rx2, ry2 = [float(value) for value in item["box"]]
+            road_margin_x = ROAD_USER_MARGIN_RATIO * max(rx2 - rx1, 1.0)
+            road_margin_y = ROAD_USER_MARGIN_RATIO * max(ry2 - ry1, 1.0)
+            expanded_overlap = not (
+                rx2 + road_margin_x < margin_x1 or rx1 - road_margin_x > margin_x2
+                or ry2 + road_margin_y < margin_y1 or ry1 - road_margin_y > margin_y2
+            )
+            on_selected_side = (
+                road_contact[0] >= tx2 / width if blind_side == "right" else road_contact[0] <= tx1 / width
+            )
+            beside_or_ahead = on_selected_side and (ty1 + 0.20 * truck_height) / height <= road_contact[1] <= margin_y2 / height
+
+            enough_history = truck_history >= MIN_MOTION_HISTORY and road_history >= MIN_MOTION_HISTORY
+            item_evidence = {
+                **evidence,
+                "road_user_on_monitored_side": bool(on_selected_side),
+                "road_user_within_caution_distance": bool(within_caution_distance),
+                "expanded_margin_overlap": bool(expanded_overlap),
+                "motion_history_ready": bool(enough_history),
+                "road_user_class": item["class"],
+            }
+            if distance < closest_distance:
+                closest_distance = distance
+                evidence = item_evidence
+            decreasing = False
+            paths_converging = False
+            if enough_history:
+                relative_motion = road_motion - truck_motion
+                closing_rate = -float(np.dot(relative, relative_motion)) / max(distance, 1e-6)
+                decreasing = closing_rate > DISTANCE_CLOSING_EPSILON
+                projected_relative = relative + relative_motion * PATH_LOOKAHEAD_FRAMES
+                projected_distance = float(np.linalg.norm(projected_relative))
+                paths_converging = projected_distance + PATH_CONVERGENCE_GAIN < distance
+            confidence_supported = min(float(primary_truck["confidence"]), float(item["confidence"])) >= 0.40
+            item_evidence["distance_decreasing"] = bool(decreasing)
+            item_evidence["motion_paths_converging"] = bool(paths_converging)
+            label = item["class"].capitalize()
+
+            caution_evidence = on_selected_side and within_caution_distance and confidence_supported
+            stronger_evidence = decreasing or expanded_overlap or paths_converging or extremely_close
+            danger_evidence = caution_evidence and stronger_evidence
+            if danger_evidence:
+                if paths_converging:
+                    return "DANGER", f"{label} and heavy-vehicle paths converging", item_evidence
+                if expanded_overlap:
+                    return "DANGER", f"{label} overlapping the heavy vehicle's safety margin", item_evidence
+                if decreasing:
+                    return "DANGER", f"{label} closing on the heavy vehicle", item_evidence
+                return "DANGER", f"{label} remaining extremely close to the heavy vehicle", item_evidence
+            if caution_evidence and best_state != "CAUTION":
+                best_state = "CAUTION"
+                evidence = item_evidence
+                best_reason = (
+                    f"{label} near the heavy vehicle on the monitored side"
+                    if on_selected_side and decreasing
+                    else f"{label} within caution distance on the monitored side"
+                )
+        return best_state, best_reason, evidence
 
     @staticmethod
-    def _action_for(state: str, zone_mode: str) -> str:
-        actions = {
-            "MONITORING": "Continue monitoring the configured zones.",
-            "TRUCK PRESENT": "Truck contact point is inside the turn zone.",
-            "TRUCK TRACKED": "A real truck detection is anchoring the demonstration zones.",
-            "CAUTION": "Road user detected in the approach zone. Use caution.",
-            "DANGER": "DO NOT ENTER THE BLIND ZONE",
-        }
-        if state == "MONITORING" and zone_mode == ZONE_MODE_MOVING:
-            return "Waiting for a real truck detection before generating zones."
-        return actions[state]
-
-    @staticmethod
-    def _pixel_polygon(points: list[list[float]], width: int, height: int) -> np.ndarray:
-        return np.asarray([[round(x * width), round(y * height)] for x, y in points], dtype=np.int32)
+    def _state_label(state: str) -> str:
+        return {
+            "MONITORING": "MONITORING",
+            "VEHICLE TRACKED": "VEHICLE TRACKED",
+            "CAUTION": "CAUTION — HEAVY VEHICLE NEAR CROSSING",
+            "DANGER": "STOP — BLIND-SPOT COLLISION RISK",
+        }[state]
 
     def _draw_frame(
         self,
         frame: np.ndarray,
         detections: list[dict[str, Any]],
-        zones: dict[str, list[list[float]]] | None,
         state: str,
-        zone_mode: str,
         primary_truck: dict[str, Any] | None,
-        zones_visible: bool,
     ) -> np.ndarray:
         height, width = frame.shape[:2]
-        if zones_visible and zones is not None:
-            polygons: dict[str, np.ndarray] = {}
-            visible_zone_names = (
-                ("CONFLICT_ZONE", "ROAD_USER_APPROACH_ZONE")
-                if zone_mode == ZONE_MODE_MOVING
-                else tuple(zones)
-            )
-            for name in visible_zone_names:
-                points = zones[name]
-                polygon = self._pixel_polygon(points, width, height)
-                polygons[name] = polygon
-                overlay = frame.copy()
-                cv2.fillPoly(overlay, [polygon], ZONE_COLORS[name])
-                if zone_mode == ZONE_MODE_MOVING:
-                    opacity = (
-                        MOVING_CONFLICT_OPACITY
-                        if name == "CONFLICT_ZONE"
-                        else MOVING_APPROACH_OPACITY
-                    )
-                else:
-                    opacity = 0.20 if state == "DANGER" and self.frame_number % 2 == 0 else 0.12
-                cv2.addWeighted(overlay, opacity, frame, 1.0 - opacity, 0, frame)
-            for name, polygon in polygons.items():
-                color = ZONE_COLORS[name]
-                cv2.polylines(frame, [polygon], True, color, ZONE_OUTLINE_WIDTH, cv2.LINE_AA)
-                anchor = tuple(polygon[0])
-                label = name
-                if zone_mode == ZONE_MODE_MOVING:
-                    label = "CONFLICT" if name == "CONFLICT_ZONE" else "APPROACH"
-                cv2.putText(
-                    frame,
-                    label,
-                    (int(anchor[0]) + 6, max(18, int(anchor[1]) + 20)),
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    0.48,
-                    color,
-                    2,
-                )
-
         for item in detections:
             x1, y1, x2, y2 = [round(value) for value in item["box"]]
             color = CLASS_COLORS[item["class"]]
@@ -613,15 +672,11 @@ class DetectionEngine:
                     label += f" ID {item['track_id']}"
             cv2.rectangle(frame, (x1, max(0, y1 - 24)), (x1 + max(120, len(label) * 10), y1), color, -1)
             cv2.putText(frame, label, (x1 + 5, max(16, y1 - 6)), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (8, 14, 18), 2)
-            contact_x = round(item["contact"][0] * width)
-            contact_y = round(item["contact"][1] * height)
-            cv2.circle(frame, (contact_x, contact_y), 5, color, -1)
 
         if state == "DANGER":
             border = 16 if self.frame_number % 2 == 0 else 7
             cv2.rectangle(frame, (3, 3), (width - 4, height - 4), (30, 35, 255), border)
-            warning = "DANGER - TURNING TRUCK" if zone_mode == ZONE_MODE_FIXED else "DANGER - TRUCK BLIND ZONE"
-            cv2.putText(frame, warning, (32, 54), cv2.FONT_HERSHEY_DUPLEX, 1.0, (255, 255, 255), 2)
+            cv2.putText(frame, "DANGER - POTENTIAL COLLISION RISK", (32, 54), cv2.FONT_HERSHEY_DUPLEX, 0.92, (255, 255, 255), 2)
         return frame
 
     def stream(self):
