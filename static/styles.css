@@ -1,3 +1,11 @@
+/*
+  STYLESHEET ROADSHOW MAP
+  1. :root and base rules define the shared visual language.
+  2. .product-layout/.analysis-panel build the two-column dashboard.
+  3. .signal-panel variants communicate monitoring/caution/danger.
+  4. Evidence, pose, and timeline rules explain backend decisions.
+  5. @media rules adapt the demo and respect reduced-motion accessibility.
+*/
 :root { --bg:#071014; --panel:#0e1a20; --panel-2:#13232a; --line:#29404a; --text:#f2f8f6; --muted:#91a6ae; --green:#58e4ad; --amber:#ffc45c; --red:#ff4b55; }
 .crossing-advice { display:block; margin-top:10px; color:var(--muted); font-size:10px; line-height:1.45; }
 * { box-sizing:border-box; }
