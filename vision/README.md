@@ -47,6 +47,10 @@ Python 3.11 or 3.12 is required. Python 3.13 and 3.14 are not supported by the s
 
 Only one processing job can run at a time. Uploaded files are placed temporarily in `input/` and removed when processing ends or is stopped. `output/` is reserved for future explicit exports; the current app streams frames without saving a processed copy.
 
+## Scene context detection
+
+The pretrained YOLO model also displays real detections for cars, buses, traffic lights, and stop signs, alongside people, bicycles, motorcycles, and trucks. Cars and buses provide scene context but do not replace the truck-specific blind-zone rule. A detected traffic light or stop sign only means the object is visible; this prototype does **not** read signal colour, infer right-of-way, or decide whether it is safe to cross.
+
 ## Zone configuration
 
 The interface provides two zone modes.
@@ -95,7 +99,7 @@ The warning zone has priority over pose cues. For example, a person oriented tow
 
 - Model: project-local `models/yolo11n.pt` by default; override with `YOLO_MODEL_PATH`
 - Inference: CPU, `imgsz=640`, confidence threshold `0.35`
-- Supported displayed classes: person, bicycle, motorcycle, truck
+- Supported displayed classes: person, bicycle, car, motorcycle, bus, truck, traffic light, stop sign
 - A pretrained model may categorize an e-bike as bicycle or motorcycle; it does not provide a separate e-bike class here.
 - MediaPipe pose and coarse head-orientation cues are heuristic observations, not attention, emotion, awareness, or intent recognition.
 - No verified turn-intention or trajectory prediction is performed.
@@ -105,5 +109,6 @@ The warning zone has priority over pose cues. For example, a person oriented tow
 - Detection quality depends on lighting, occlusion, perspective, video quality, and the pretrained model.
 - Activity labels need several consecutive frames and are less reliable without stable YOLO track IDs.
 - Webcam input is intentionally deferred until uploaded-video mode is proven reliable.
+
 
 
