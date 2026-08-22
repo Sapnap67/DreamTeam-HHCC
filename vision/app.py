@@ -29,7 +29,19 @@ POSE_MODEL_PATH = Path(os.environ.get("MEDIAPIPE_POSE_MODEL_PATH", MODEL_DIR / "
 APP_PORT = int(os.environ.get("APP_PORT", "5000"))
 ALLOWED_EXTENSIONS = {".mp4", ".mov", ".avi", ".mkv", ".m4v"}
 MAX_UPLOAD_BYTES = 500 * 1024 * 1024
-RELEVANT_CLASSES = {0: "person", 1: "bicycle", 3: "motorcycle", 7: "truck"}
+RELEVANT_CLASSES = {
+    0: "person",
+    1: "bicycle",
+    2: "car",
+    3: "motorcycle",
+    5: "bus",
+    7: "truck",
+    9: "traffic light",
+    11: "stop sign",
+}
+VULNERABLE_ROAD_USER_CLASSES = {"person", "bicycle", "motorcycle"}
+VEHICLE_CLASSES = {"bicycle", "car", "motorcycle", "bus", "truck"}
+TRAFFIC_CONTROL_CLASSES = {"traffic light", "stop sign"}
 ZONE_MODE_FIXED = "fixed"
 ZONE_MODE_MOVING = "moving"
 ZONE_MODE_LABELS = {
@@ -59,8 +71,12 @@ APPROACH_FAR_BOTTOM_OFFSET_HEIGHT = 1.08
 CLASS_COLORS = {
     "person": (86, 220, 255),
     "bicycle": (102, 236, 161),
+    "car": (208, 137, 255),
     "motorcycle": (107, 179, 255),
+    "bus": (139, 190, 255),
     "truck": (255, 167, 70),
+    "traffic light": (82, 242, 157),
+    "stop sign": (80, 80, 255),
 }
 ZONE_COLORS = {
     "TRUCK_TURN_ZONE": (255, 225, 70),
@@ -140,6 +156,7 @@ class DetectionEngine:
                 "track_id": None,
                 "lost_frames": 0,
             },
+            "scene_context": {"vehicles": [], "traffic_controls": []},
             "pedestrian_analysis": empty_analysis("MONITORING", "WAITING FOR VIDEO"),
         }
 
@@ -360,6 +377,7 @@ class DetectionEngine:
                             "frame_index": self.frame_number,
                             "error": None,
                             "primary_truck": primary_status,
+                            "scene_context": self._scene_context(detections),
                             "zones_active": bool(zones_visible and active_zones),
                             "zone_polygons": active_zones,
                             "pedestrian_analysis": pedestrian_analysis,
@@ -421,6 +439,16 @@ class DetectionEngine:
     def _box_area(item: dict[str, Any]) -> float:
         x1, y1, x2, y2 = item["box"]
         return max(0.0, x2 - x1) * max(0.0, y2 - y1)
+
+    @staticmethod
+    def _scene_context(detections: list[dict[str, Any]]) -> dict[str, list[str]]:
+        """Expose detected road context without treating it as a signal-state decision."""
+        return {
+            "vehicles": [item["class"] for item in detections if item["class"] in VEHICLE_CLASSES],
+            "traffic_controls": [
+                item["class"] for item in detections if item["class"] in TRAFFIC_CONTROL_CLASSES
+            ],
+        }
 
     def _update_primary_truck(
         self,
@@ -547,7 +575,7 @@ class DetectionEngine:
         if zone_mode == ZONE_MODE_MOVING:
             if primary_truck is None:
                 return "MONITORING"
-            road_users = [item for item in detections if item["class"] in {"person", "bicycle", "motorcycle"}]
+            road_users = [item for item in detections if item["class"] in VULNERABLE_ROAD_USER_CLASSES]
             if any(self._inside(item["contact"], zones["CONFLICT_ZONE"]) for item in road_users):
                 return "DANGER"
             if any(self._inside(item["contact"], zones["ROAD_USER_APPROACH_ZONE"]) for item in road_users):
@@ -560,7 +588,7 @@ class DetectionEngine:
         )
         if not truck_present:
             return "MONITORING"
-        road_users = [item for item in detections if item["class"] in {"person", "bicycle", "motorcycle"}]
+        road_users = [item for item in detections if item["class"] in VULNERABLE_ROAD_USER_CLASSES]
         if any(self._inside(item["contact"], zones["CONFLICT_ZONE"]) for item in road_users):
             return "DANGER"
         if any(self._inside(item["contact"], zones["ROAD_USER_APPROACH_ZONE"]) for item in road_users):
@@ -732,5 +760,6 @@ def too_large(_error):
 
 if __name__ == "__main__":
     app.run(host="127.0.0.1", port=APP_PORT, threaded=True, debug=False)
+
 
 
