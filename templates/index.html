@@ -258,12 +258,16 @@
         return Object.fromEntries(Object.entries(zones).map(([name, points]) => [name, points.map(point => [...point])]));
       }
 
+      function emptyZones(zones) {
+        return Object.fromEntries(Object.keys(zones).map(name => [name, []]));
+      }
+
       async function loadFixedZones() {
         try {
           const response = await fetch("/api/fixed-zones", { cache: "no-store" });
           const data = await response.json();
           if (!response.ok) throw new Error(data.error || "Could not load fixed zones.");
-          editableZones = cloneZones(data.zones);
+          editableZones = data.calibrated ? cloneZones(data.zones) : emptyZones(data.zones);
           renderCalibrationOverlay();
         } catch (error) {
           message.textContent = error.message;
@@ -465,7 +469,9 @@
             : "Analyzing the first fixed-camera frame for road and sidewalk…";
         applySceneDraftButton.disabled = !draftReady;
         if (!movingMode && editableZones === null) {
-          editableZones = cloneZones(data.fixed_zones || {});
+          editableZones = data.fixed_zones_calibrated
+            ? cloneZones(data.fixed_zones || {})
+            : emptyZones(data.fixed_zones || {});
           renderCalibrationOverlay();
         }
         renderCalibrationOverlay();
