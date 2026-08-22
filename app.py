@@ -281,13 +281,6 @@ class DetectionEngine:
             self.warning_reset_requested = True
             return True, "Fixed-camera zones saved."
 
-    def apply_scene_draft(self) -> tuple[bool, str]:
-        with self.lock:
-            suggested = self.scene_analysis.get("suggested_zones")
-        if suggested is None:
-            return False, "No road-and-sidewalk draft is ready yet."
-        return self.update_fixed_zones(suggested)
-
     def update_surface_map(self, surfaces: Any) -> tuple[bool, str]:
         try:
             validated = validate_surfaces(surfaces)
@@ -871,14 +864,6 @@ def api_fixed_zones():
 def api_update_fixed_zones():
     payload = request.get_json(silent=True) or {}
     updated, message = engine.update_fixed_zones(payload.get("zones"))
-    if not updated:
-        return jsonify({"ok": False, "error": message}), 400
-    return jsonify({"ok": True, "message": message, "zones": engine.snapshot()["fixed_zones"]})
-
-
-@app.post("/api/scene-draft/apply")
-def api_apply_scene_draft():
-    updated, message = engine.apply_scene_draft()
     if not updated:
         return jsonify({"ok": False, "error": message}), 400
     return jsonify({"ok": True, "message": message, "zones": engine.snapshot()["fixed_zones"]})
