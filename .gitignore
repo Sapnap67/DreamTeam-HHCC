@@ -18,6 +18,7 @@ env/
 .env.*
 !.env.example
 .yolo-config/
+.runtime/
 
 # YOLO models and generated data
 *.pt
