@@ -63,20 +63,29 @@
         <section id="fixedCalibration" class="fixed-calibration" hidden aria-label="Fixed-camera zone calibration">
           <div id="sceneDraft" class="scene-draft" hidden>
             <div><span class="section-label">Road + sidewalk draft</span><p id="sceneDraftStatus">Analyzing the first fixed-camera frame…</p></div>
-            <button id="applySceneDraftButton" class="compact-button save-zones" type="button">Use draft zones</button>
+            <button id="applySceneDraftButton" class="compact-button save-zones" type="button">Use auto zone draft</button>
           </div>
           <div class="calibration-heading">
-            <div><span class="section-label">Fixed-camera calibration</span><p>Choose a zone, then click its corners on the video.</p></div>
-            <select id="calibrationZone" aria-label="Zone to edit">
-              <option value="TRUCK_TURN_ZONE">Truck turn area</option>
-              <option value="ROAD_USER_APPROACH_ZONE">Approach area</option>
-              <option value="CONFLICT_ZONE">Conflict area</option>
+            <div><span class="section-label">Fixed-camera calibration</span><p>Select a layer and click its corners. Finish each road or sidewalk polygon before starting another.</p></div>
+            <select id="calibrationZone" aria-label="Layer to edit">
+              <optgroup label="Scene surfaces">
+                <option value="road_polygons">Road surface</option>
+                <option value="sidewalk_polygons">Sidewalk surface</option>
+              </optgroup>
+              <optgroup label="Safety zones">
+                <option value="TRUCK_TURN_ZONE">Truck turn area</option>
+                <option value="ROAD_USER_APPROACH_ZONE">Approach area</option>
+                <option value="CONFLICT_ZONE">Conflict area</option>
+              </optgroup>
             </select>
           </div>
           <div class="calibration-actions">
             <button id="undoPointButton" class="compact-button" type="button">Undo point</button>
-            <button id="clearZoneButton" class="compact-button" type="button">Clear zone</button>
+            <button id="finishPolygonButton" class="compact-button" type="button">Finish surface</button>
+            <button id="removePolygonButton" class="compact-button" type="button">Remove last surface</button>
+            <button id="clearZoneButton" class="compact-button" type="button">Clear selected</button>
             <button id="discardZonesButton" class="compact-button" type="button">Discard edits</button>
+            <button id="saveSurfacesButton" class="compact-button save-surfaces" type="button">Save road + sidewalks</button>
             <button id="saveZonesButton" class="compact-button save-zones" type="button">Save fixed zones</button>
           </div>
         </section>
@@ -187,8 +196,11 @@
       const fixedCalibration = document.getElementById("fixedCalibration");
       const calibrationZone = document.getElementById("calibrationZone");
       const undoPointButton = document.getElementById("undoPointButton");
+      const finishPolygonButton = document.getElementById("finishPolygonButton");
+      const removePolygonButton = document.getElementById("removePolygonButton");
       const clearZoneButton = document.getElementById("clearZoneButton");
       const discardZonesButton = document.getElementById("discardZonesButton");
+      const saveSurfacesButton = document.getElementById("saveSurfacesButton");
       const saveZonesButton = document.getElementById("saveZonesButton");
       const sceneDraft = document.getElementById("sceneDraft");
       const sceneDraftStatus = document.getElementById("sceneDraftStatus");
@@ -196,6 +208,8 @@
       let previousState = "MONITORING";
       let audioContext = null;
       let editableZones = null;
+      let editableSurfaces = null;
+      let surfaceDrafts = { road_polygons: [], sidewalk_polygons: [] };
       let calibrationReady = false;
 
       input.addEventListener("change", () => {
@@ -248,7 +262,7 @@
 
       zoneMode.addEventListener("change", async () => {
         await updateZoneSettings();
-        if (zoneMode.value === "fixed") await loadFixedZones();
+        if (zoneMode.value === "fixed") await Promise.all([loadFixedZones(), loadSurfaces()]);
       });
       blindSide.addEventListener("change", () => updateZoneSettings(true));
       zonesVisible.addEventListener("change", () => updateZoneSettings());
@@ -262,12 +276,33 @@
         return Object.fromEntries(Object.keys(zones).map(name => [name, []]));
       }
 
+      function cloneSurfaces(surfaces) {
+        return Object.fromEntries(Object.entries(surfaces).map(([name, polygons]) => [name, polygons.map(polygon => polygon.map(point => [...point]))]));
+      }
+
+      function isSurfaceLayer(name = calibrationZone.value) {
+        return name === "road_polygons" || name === "sidewalk_polygons";
+      }
+
       async function loadFixedZones() {
         try {
           const response = await fetch("/api/fixed-zones", { cache: "no-store" });
           const data = await response.json();
           if (!response.ok) throw new Error(data.error || "Could not load fixed zones.");
           editableZones = data.calibrated ? cloneZones(data.zones) : emptyZones(data.zones);
+          renderCalibrationOverlay();
+        } catch (error) {
+          message.textContent = error.message;
+        }
+      }
+
+      async function loadSurfaces() {
+        try {
+          const response = await fetch("/api/surfaces", { cache: "no-store" });
+          const data = await response.json();
+          if (!response.ok) throw new Error(data.error || "Could not load the surface map.");
+          editableSurfaces = data.calibrated ? cloneSurfaces(data.surfaces) : null;
+          surfaceDrafts = { road_polygons: [], sidewalk_polygons: [] };
           renderCalibrationOverlay();
         } catch (error) {
           message.textContent = error.message;
@@ -285,43 +320,116 @@
       }
 
       function renderCalibrationOverlay() {
-        if (!calibrationReady || !editableZones || zoneMode.value !== "fixed") {
+        if (!calibrationReady || zoneMode.value !== "fixed") {
           calibrationOverlay.innerHTML = "";
           return;
         }
         const frame = displayedFrameRect();
         calibrationOverlay.setAttribute("viewBox", `0 0 ${frame.shell.width} ${frame.shell.height}`);
         const selected = calibrationZone.value;
-        calibrationOverlay.innerHTML = Object.entries(editableZones).map(([name, points]) => {
+        const mapPoints = points => points.map(([x, y]) => `${frame.left + x * frame.width},${frame.top + y * frame.height}`).join(" ");
+        const surfaceMarkup = editableSurfaces ? Object.entries(editableSurfaces).map(([name, polygons]) => polygons.map(points => {
+          const active = name === selected ? "active" : "";
+          const kind = name === "road_polygons" ? "road-surface" : "sidewalk-surface";
+          return `<polygon class="surface-polygon ${kind} ${active}" points="${mapPoints(points)}"></polygon>`;
+        }).join("")).join("") : "";
+        const draftMarkup = Object.entries(surfaceDrafts).map(([name, points]) => {
+          if (!points.length) return "";
+          const kind = name === "road_polygons" ? "road-surface" : "sidewalk-surface";
+          const vertices = points.map(([x, y]) => `<circle class="surface-point ${kind}" cx="${frame.left + x * frame.width}" cy="${frame.top + y * frame.height}" r="5"></circle>`).join("");
+          return `<polyline class="surface-polygon ${kind} active draft" points="${mapPoints(points)}"></polyline>${vertices}`;
+        }).join("");
+        const zoneMarkup = editableZones ? Object.entries(editableZones).map(([name, points]) => {
           const mapped = points.map(([x, y]) => `${frame.left + x * frame.width},${frame.top + y * frame.height}`).join(" ");
           const active = name === selected ? "active" : "";
           const vertices = points.map(([x, y]) => `<circle class="calibration-point ${active}" cx="${frame.left + x * frame.width}" cy="${frame.top + y * frame.height}" r="5"></circle>`).join("");
           return `<polygon class="calibration-polygon ${active}" points="${mapped}"></polygon>${vertices}`;
-        }).join("");
+        }).join("") : "";
+        calibrationOverlay.innerHTML = `${surfaceMarkup}${draftMarkup}${zoneMarkup}`;
       }
 
       videoShell.addEventListener("click", event => {
-        if (!calibrationReady || zoneMode.value !== "fixed" || !editableZones) return;
+        if (!calibrationReady || zoneMode.value !== "fixed") return;
         const frame = displayedFrameRect();
         const localX = event.clientX - frame.shell.left - frame.left;
         const localY = event.clientY - frame.shell.top - frame.top;
         if (localX < 0 || localY < 0 || localX > frame.width || localY > frame.height) return;
-        editableZones[calibrationZone.value].push([Number((localX / frame.width).toFixed(5)), Number((localY / frame.height).toFixed(5))]);
+        const point = [Number((localX / frame.width).toFixed(5)), Number((localY / frame.height).toFixed(5))];
+        if (isSurfaceLayer()) {
+          if (!editableSurfaces) editableSurfaces = { road_polygons: [], sidewalk_polygons: [] };
+          surfaceDrafts[calibrationZone.value].push(point);
+        } else if (editableZones) {
+          editableZones[calibrationZone.value].push(point);
+        }
         renderCalibrationOverlay();
       });
 
-      calibrationZone.addEventListener("change", renderCalibrationOverlay);
+      calibrationZone.addEventListener("change", () => {
+        const surfaceMode = isSurfaceLayer();
+        finishPolygonButton.disabled = !surfaceMode;
+        removePolygonButton.disabled = !surfaceMode;
+        renderCalibrationOverlay();
+      });
       undoPointButton.addEventListener("click", () => {
-        if (!editableZones) return;
-        editableZones[calibrationZone.value].pop();
+        if (isSurfaceLayer()) surfaceDrafts[calibrationZone.value].pop();
+        else if (editableZones) editableZones[calibrationZone.value].pop();
+        renderCalibrationOverlay();
+      });
+      finishPolygonButton.addEventListener("click", () => {
+        if (!isSurfaceLayer()) return;
+        const points = surfaceDrafts[calibrationZone.value];
+        if (points.length < 3) {
+          message.textContent = "A surface polygon needs at least three points.";
+          return;
+        }
+        if (!editableSurfaces) editableSurfaces = { road_polygons: [], sidewalk_polygons: [] };
+        editableSurfaces[calibrationZone.value].push(points.map(point => [...point]));
+        surfaceDrafts[calibrationZone.value] = [];
+        message.textContent = "Surface added. Start another polygon or save the surface map.";
+        renderCalibrationOverlay();
+      });
+      removePolygonButton.addEventListener("click", () => {
+        if (!isSurfaceLayer() || !editableSurfaces) return;
+        editableSurfaces[calibrationZone.value].pop();
         renderCalibrationOverlay();
       });
       clearZoneButton.addEventListener("click", () => {
-        if (!editableZones) return;
-        editableZones[calibrationZone.value] = [];
+        if (isSurfaceLayer()) {
+          if (!editableSurfaces) editableSurfaces = { road_polygons: [], sidewalk_polygons: [] };
+          editableSurfaces[calibrationZone.value] = [];
+          surfaceDrafts[calibrationZone.value] = [];
+        } else if (editableZones) editableZones[calibrationZone.value] = [];
         renderCalibrationOverlay();
       });
-      discardZonesButton.addEventListener("click", loadFixedZones);
+      discardZonesButton.addEventListener("click", () => Promise.all([loadFixedZones(), loadSurfaces()]));
+      saveSurfacesButton.addEventListener("click", async () => {
+        if (!editableSurfaces) return;
+        if (Object.values(surfaceDrafts).some(points => points.length)) {
+          message.textContent = "Finish or undo the current surface polygon before saving.";
+          return;
+        }
+        if (!editableSurfaces.road_polygons.length || !editableSurfaces.sidewalk_polygons.length) {
+          message.textContent = "Add at least one road and one sidewalk polygon before saving.";
+          return;
+        }
+        saveSurfacesButton.disabled = true;
+        try {
+          const response = await fetch("/api/surfaces", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ surfaces: editableSurfaces })
+          });
+          const data = await response.json();
+          if (!response.ok) throw new Error(data.error || "Could not save the surface map.");
+          editableSurfaces = cloneSurfaces(data.surfaces);
+          message.textContent = "Road and sidewalk polygons saved for this fixed camera.";
+          renderCalibrationOverlay();
+        } catch (error) {
+          message.textContent = error.message;
+        } finally {
+          saveSurfacesButton.disabled = false;
+        }
+      });
       saveZonesButton.addEventListener("click", async () => {
         if (!editableZones) return;
         const incomplete = Object.entries(editableZones).find(([, points]) => points.length < 3);
@@ -461,7 +569,7 @@
         const draftReady = scene.status === "DRAFT READY" && scene.suggested_zones;
         sceneDraft.hidden = movingMode || !calibrationReady;
         sceneDraftStatus.textContent = draftReady
-          ? "Road and sidewalk are highlighted on the video. The zone shapes are a draft—review them before use."
+          ? `${(scene.road_polygons || []).length} road surface(s) and ${(scene.sidewalk_polygons || []).length} sidewalk surface(s) suggested. Correct them before saving.`
           : scene.status === "DRAFT READY"
             ? "The model found road pixels but could not form a reliable sidewalk-boundary draft. Draw the zones manually."
           : scene.status === "UNAVAILABLE"
@@ -473,6 +581,16 @@
             ? cloneZones(data.fixed_zones || {})
             : emptyZones(data.fixed_zones || {});
           renderCalibrationOverlay();
+        }
+        if (!movingMode && editableSurfaces === null) {
+          if (data.surface_map_calibrated) {
+            editableSurfaces = cloneSurfaces(data.surface_map || {});
+          } else if (scene.status === "DRAFT READY") {
+            editableSurfaces = cloneSurfaces({
+              road_polygons: scene.road_polygons || [],
+              sidewalk_polygons: scene.sidewalk_polygons || []
+            });
+          }
         }
         renderCalibrationOverlay();
         if (data.state === "DANGER" && previousState !== "DANGER") warningTone();
