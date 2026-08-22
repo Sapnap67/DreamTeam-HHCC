@@ -1,0 +1,12 @@
+services:
+  - type: web
+    name: blindspot-guardian-api
+    runtime: docker
+    plan: free
+    healthCheckPath: /api/health
+    envVars:
+      - key: ALLOWED_ORIGINS
+        value: https://blindspot-guardian-hhcc.windy-skink-6174.chatgpt.site
+      - key: MAX_UPLOAD_BYTES
+        value: "104857600"
+

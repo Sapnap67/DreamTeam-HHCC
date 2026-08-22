@@ -30,12 +30,18 @@ from behavior import PoseBehaviorAnalyzer, unavailable_observation
 # 1. PROJECT PATHS AND SUPPORTED INPUTS
 # Paths locate local models/uploads; class IDs select relevant YOLO detections.
 BASE_DIR = Path(__file__).resolve().parent
-INPUT_DIR = BASE_DIR / "input"
-OUTPUT_DIR = BASE_DIR / "output"
+DATA_DIR = Path(os.environ.get("APP_DATA_DIR", BASE_DIR))
+INPUT_DIR = DATA_DIR / "input"
+OUTPUT_DIR = DATA_DIR / "output"
 MODEL_PATH = Path(os.environ.get("YOLO_MODEL_PATH", BASE_DIR / "yolo11n.pt"))
 POSE_MODEL_PATH = Path(os.environ.get("POSE_MODEL_PATH", BASE_DIR / "models" / "pose_landmarker_lite.task"))
 ALLOWED_EXTENSIONS = {".mp4", ".mov", ".avi", ".mkv", ".m4v"}
-MAX_UPLOAD_BYTES = 500 * 1024 * 1024
+MAX_UPLOAD_BYTES = int(os.environ.get("MAX_UPLOAD_BYTES", 100 * 1024 * 1024))
+ALLOWED_ORIGINS = {
+    origin.strip().rstrip("/")
+    for origin in os.environ.get("ALLOWED_ORIGINS", "").split(",")
+    if origin.strip()
+}
 RELEVANT_CLASSES = {0: "person", 1: "bicycle", 2: "car", 3: "motorcycle", 5: "bus", 7: "truck"}
 BLIND_SIDES = {"right", "left"}
 SMOOTHING_ALPHA = 0.25
@@ -90,6 +96,18 @@ app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = MAX_UPLOAD_BYTES
 INPUT_DIR.mkdir(exist_ok=True)
 OUTPUT_DIR.mkdir(exist_ok=True)
+
+
+@app.after_request
+def add_cors_headers(response: Response) -> Response:
+    """Allow only configured browser frontends to call the public demo API."""
+    origin = request.headers.get("Origin", "").rstrip("/")
+    if origin and origin in ALLOWED_ORIGINS:
+        response.headers["Access-Control-Allow-Origin"] = origin
+        response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
+        response.headers["Access-Control-Allow-Headers"] = "Content-Type"
+        response.headers["Vary"] = "Origin"
+    return response
 
 
 def blank_frame(message: str = "Upload a video to begin real YOLO processing") -> bytes:
@@ -1043,6 +1061,20 @@ def index():
     return render_template("index.html")
 
 
+@app.get("/api/health")
+def api_health():
+    return jsonify(
+        {
+            "ok": True,
+            "service": "BlindSpot Guardian",
+            "busy": engine.snapshot()["running"],
+            "yolo_model_available": MODEL_PATH.is_file(),
+            "mediapipe_model_available": POSE_MODEL_PATH.is_file(),
+            "max_upload_bytes": MAX_UPLOAD_BYTES,
+        }
+    )
+
+
 @app.get("/video_feed")
 def video_feed():
     return Response(engine.stream(), mimetype="multipart/x-mixed-replace; boundary=frame")
@@ -1117,5 +1149,11 @@ def too_large(_error):
 
 
 if __name__ == "__main__":
-    app.run(host="127.0.0.1", port=5000, threaded=True, debug=False)
+    app.run(
+        host=os.environ.get("HOST", "127.0.0.1"),
+        port=int(os.environ.get("PORT", "5000")),
+        threaded=True,
+        debug=False,
+    )
+
 

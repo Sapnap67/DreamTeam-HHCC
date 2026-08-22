@@ -46,7 +46,18 @@ python -m pip install -r requirements.txt
 python app.py
 ```
 
-Open <http://127.0.0.1:5000>. Press `Ctrl+C` to stop. The included `yolo11n.pt` is used by default. If the model is elsewhere, set `YOLO_MODEL_PATH` to its full path before running the app.
+Open <http://127.0.0.1:5000>. Press `Ctrl+C` to stop. Download `yolo11n.pt` through Ultralytics or set `YOLO_MODEL_PATH` to an existing model file before starting. Model weights are intentionally excluded from Git.
+
+## Cloud demo deployment
+
+The repository includes a Docker deployment and a Render Blueprint for a small public demonstration service. The container downloads the YOLO 11 nano weights and the official MediaPipe Pose Landmarker Lite model during its build.
+
+1. Push this branch to GitHub.
+2. In Render, create a new Blueprint from this repository's `render.yaml`.
+3. Wait for `/api/health` to report that both model files are available.
+4. Put the resulting `https://...onrender.com` URL into the companion website's backend configuration.
+
+The free service is suitable only for a short hackathon demonstration: it can sleep when idle, processing is CPU-only, uploads are temporary, and only one video can run at a time. The default cloud upload limit is 100 MB. Do not use this prototype for road-safety decisions.
 
 ## Demo
 
@@ -81,4 +92,5 @@ AI assisted with documentation, code generation, debugging, and explanation. The
 
 Dream Team — HHCC 2026 Prototype Development Track  
 Theme: **AI Reshaping the Automotive Industry**
+
 
