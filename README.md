@@ -10,7 +10,7 @@ BlindSpot Guardian is an HHCC 2026 prototype for safer heavy-vehicle turns at pe
 - Detection of `person`, `bicycle`, `car`, `motorcycle`, `bus`, and `truck`
 - Selection and tracking of a primary bus or truck
 - Image-space proximity and short motion-history analysis
-- A bilingual pedestrian signal with `SAFE`, `CAUTION`, and `DANGER` states
+- A bilingual pedestrian signal with `MONITORING`, `CAUTION`, and `DANGER` states
 - Explainable evidence showing why the current state was selected
 - Multi-frame confirmation and clearing delays to reduce alert flicker
 - Bounding boxes, confidence values, inference time, and processing FPS
@@ -91,7 +91,7 @@ Only one video is processed at a time. Uploaded files are temporary and processe
 
 ## Warning states
 
-- **SAFE — MONITORING:** no supported heavy-vehicle/road-user risk evidence
+- **MONITORING — NO WARNING:** no supported heavy-vehicle/road-user risk evidence; this is not permission to cross
 - **CAUTION — HEAVY VEHICLE NEAR CROSSING:** a vulnerable road user remains near the monitored side of a tracked bus or truck
 - **DANGER — BLIND-SPOT COLLISION RISK:** stronger proximity or converging-motion evidence persists for multiple frames
 
