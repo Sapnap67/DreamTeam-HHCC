@@ -53,7 +53,7 @@ button:disabled { cursor: wait; opacity: .45; }
 .form-message { min-height: 18px; margin: 8px 2px 0; color: var(--amber); font-size: 12px; }
 .rule-note { margin: 6px 2px 0; color: var(--muted); font-size: 11px; }
 .telemetry { display: flex; flex-direction: column; gap: 12px; }
-.state-card, .truck-card, .behavior-card, .detections-card, .honesty-card, .metrics { border: 1px solid var(--line); border-radius: 12px; background: linear-gradient(145deg, rgba(24,36,44,.96), rgba(14,23,29,.96)); }
+.state-card, .truck-card, .behavior-card, .scene-card, .detections-card, .honesty-card, .metrics { border: 1px solid var(--line); border-radius: 12px; background: linear-gradient(145deg, rgba(24,36,44,.96), rgba(14,23,29,.96)); }
 .state-card { padding: 17px; }
 .section-label { color: var(--muted); font-size: 10px; font-weight: 900; letter-spacing: .12em; text-transform: uppercase; }
 .state-value { display: flex; align-items: center; gap: 9px; margin-top: 10px; font-size: 23px; font-weight: 950; letter-spacing: -.02em; }
@@ -81,6 +81,12 @@ button:disabled { cursor: wait; opacity: .45; }
 .behavior-card dl div { display: flex; justify-content: space-between; gap: 12px; padding-top: 7px; border-top: 1px solid rgba(255,255,255,.06); }
 .behavior-card dt { flex: 0 0 88px; color: var(--muted); font-size: 9px; text-transform: uppercase; letter-spacing: .06em; }
 .behavior-card dd { margin: 0; color: #d9e5e3; font-size: 9px; font-weight: 800; text-align: right; }
+.scene-card { padding: 15px; }
+.scene-card dl { display: grid; gap: 7px; margin: 11px 0 0; }
+.scene-card dl div { display: flex; justify-content: space-between; gap: 12px; padding-top: 7px; border-top: 1px solid rgba(255,255,255,.06); }
+.scene-card dt { color: var(--muted); font-size: 9px; text-transform: uppercase; letter-spacing: .06em; }
+.scene-card dd { margin: 0; color: #d9e5e3; font-size: 9px; font-weight: 800; text-align: right; }
+.scene-card p { margin: 9px 0 0; color: var(--muted); font-size: 10px; line-height: 1.45; }
 .metrics { display: grid; grid-template-columns: 1fr 1fr; }
 .metrics div { padding: 14px; }
 .metrics div + div { border-left: 1px solid var(--line); }
@@ -94,7 +100,7 @@ button:disabled { cursor: wait; opacity: .45; }
 .detection-row { display: grid; grid-template-columns: 9px 1fr auto; align-items: center; gap: 8px; padding: 9px 8px; border-top: 1px solid rgba(255,255,255,.055); font-size: 12px; }
 .detection-row > span:last-child { color: #a8b9be; font-variant-numeric: tabular-nums; }
 .object-dot { width: 7px; height: 7px; border-radius: 50%; background: #fff; }
-.detection-row.truck .object-dot { background: #46a7ff; }.detection-row.person .object-dot { background: #ffdc56; }.detection-row.bicycle .object-dot { background: #66eca1; }.detection-row.motorcycle .object-dot { background: #6bb3ff; }
+.detection-row.truck .object-dot { background: #46a7ff; }.detection-row.person .object-dot { background: #ffdc56; }.detection-row.bicycle .object-dot { background: #66eca1; }.detection-row.car .object-dot { background: #d089ff; }.detection-row.motorcycle .object-dot { background: #6bb3ff; }.detection-row.bus .object-dot { background: #8bbeff; }.detection-row.traffic-light .object-dot { background: #52f29d; }.detection-row.stop-sign .object-dot { background: #ff5050; }
 .honesty-card { padding: 15px; }
 .honesty-card strong { color: #dce8e5; font-size: 12px; }
 .honesty-card p { margin: 8px 0 0; color: var(--muted); font-size: 10.5px; line-height: 1.5; }
@@ -103,4 +109,5 @@ button:disabled { cursor: wait; opacity: .45; }
 @media (max-width: 1100px) { .zone-controls { grid-template-columns: 1fr 1fr; }.visibility-control, .compact-button { min-height: 35px; } }
 @media (max-width: 1000px) { .workspace { grid-template-columns: 1fr; }.telemetry { display: grid; grid-template-columns: 1fr 1fr; }.honesty-card { grid-column: span 2; } }
 @media (max-width: 680px) { main { padding: 12px; }.topbar { align-items: flex-start; }.prototype-badge { max-width: 150px; text-align: center; line-height: 1.5; }.video-shell { min-height: 260px; }.controls { grid-template-columns: 1fr 1fr; }.file-control { grid-column: span 2; }.zone-controls { grid-template-columns: 1fr; }.telemetry { grid-template-columns: 1fr; }.honesty-card { grid-column: auto; }.metrics { order: 2; } }
+
 
