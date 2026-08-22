@@ -57,7 +57,7 @@ The interface provides two zone modes.
 
 ### Fixed Intersection Camera
 
-This is the intended deployment mode for a camera mounted on a stationary traffic-light pole. On the first frame of a fixed-camera clip, the app runs a Cityscapes semantic-segmentation model to highlight **road** and **sidewalk** pixels and propose editable draft zones at their boundary. The model downloads once on first use, so the computer needs internet access for that first analysis.
+This is the intended deployment mode for a camera mounted on a stationary traffic-light pole. On the first frame of a fixed-camera clip, the app runs an ADE20K semantic-segmentation model to highlight **road** and **sidewalk** pixels and propose editable draft zones at their boundary. This general-scene model handles the elevated camera view better than the earlier street-level model. It downloads once on first use, so the computer needs internet access for that first analysis.
 
 The draft is not a safety decision and is never enabled automatically. Review it, choose **Use draft zones**, then adjust any corners in the **Fixed-camera calibration** panel and choose **Save fixed zones**. The app saves approved geometry to `zones.json` and uses it immediately. Each of the three zones needs at least three points. Recalibrate whenever the camera is moved or its view changes.
 
