@@ -16,21 +16,39 @@ from flask import Flask, Response, jsonify, render_template, request
 from ultralytics import YOLO
 from werkzeug.utils import secure_filename
 
+from behavior import PoseBehaviorAnalyzer, empty_analysis
+
 
 BASE_DIR = Path(__file__).resolve().parent
 INPUT_DIR = BASE_DIR / "input"
 OUTPUT_DIR = BASE_DIR / "output"
+MODEL_DIR = BASE_DIR / "models"
 ZONES_PATH = BASE_DIR / "zones.json"
-MODEL_PATH = Path(os.environ.get("YOLO_MODEL_PATH", BASE_DIR / "yolo11n.pt"))
+MODEL_PATH = Path(os.environ.get("YOLO_MODEL_PATH", MODEL_DIR / "yolo11n.pt"))
+POSE_MODEL_PATH = Path(os.environ.get("MEDIAPIPE_POSE_MODEL_PATH", MODEL_DIR / "pose_landmarker_lite.task"))
+APP_PORT = int(os.environ.get("APP_PORT", "5000"))
 ALLOWED_EXTENSIONS = {".mp4", ".mov", ".avi", ".mkv", ".m4v"}
 MAX_UPLOAD_BYTES = 500 * 1024 * 1024
-RELEVANT_CLASSES = {0: "person", 1: "bicycle", 3: "motorcycle", 7: "truck"}
+RELEVANT_CLASSES = {
+    0: "person",
+    1: "bicycle",
+    2: "car",
+    3: "motorcycle",
+    5: "bus",
+    7: "truck",
+    9: "traffic light",
+    11: "stop sign",
+}
+VULNERABLE_ROAD_USER_CLASSES = {"person", "bicycle", "motorcycle"}
+VEHICLE_CLASSES = {"bicycle", "car", "motorcycle", "bus", "truck"}
+TRAFFIC_CONTROL_CLASSES = {"traffic light", "stop sign"}
 ZONE_MODE_FIXED = "fixed"
 ZONE_MODE_MOVING = "moving"
 ZONE_MODE_LABELS = {
     ZONE_MODE_FIXED: "FIXED INTERSECTION CAMERA",
     ZONE_MODE_MOVING: "MOVING-CAMERA DEMO",
 }
+ZONE_NAMES = ("TRUCK_TURN_ZONE", "ROAD_USER_APPROACH_ZONE", "CONFLICT_ZONE")
 BLIND_SIDES = {"right", "left"}
 SMOOTHING_ALPHA = 0.25
 MAX_TRUCK_LOST_FRAMES = 5
@@ -39,23 +57,27 @@ YOLO_TRACKING_AVAILABLE = importlib.util.find_spec("lap") is not None
 # Dynamic-zone dimensions are expressed as multiples of the smoothed truck size.
 TRUCK_ZONE_PAD_WIDTH = 0.18
 TRUCK_ZONE_PAD_HEIGHT = 0.14
-CONFLICT_NEAR_GAP_WIDTH = 0.02
-CONFLICT_OUTWARD_WIDTH = 0.55
-CONFLICT_NEAR_TOP_HEIGHT = 0.20
-CONFLICT_NEAR_BOTTOM_HEIGHT = 1.00
-CONFLICT_OUTER_TOP_HEIGHT = 0.30
-CONFLICT_OUTER_BOTTOM_HEIGHT = 0.95
-APPROACH_OUTWARD_WIDTH = 0.75
-APPROACH_OUTER_TOP_HEIGHT = 0.12
-APPROACH_OUTER_BOTTOM_HEIGHT = 1.12
-MOVING_CONFLICT_OPACITY = 0.14
-MOVING_APPROACH_OPACITY = 0.09
-ZONE_OUTLINE_WIDTH = 2
+CONFLICT_NEAR_GAP_WIDTH = 0.06
+CONFLICT_FAR_REACH_WIDTH = 1.10
+CONFLICT_TOP_OFFSET_HEIGHT = 0.12
+CONFLICT_FAR_TOP_OFFSET_HEIGHT = 0.28
+CONFLICT_NEAR_BOTTOM_OFFSET_HEIGHT = 0.24
+CONFLICT_FAR_BOTTOM_OFFSET_HEIGHT = 0.62
+APPROACH_NEAR_REACH_WIDTH = 0.72
+APPROACH_FAR_REACH_WIDTH = 2.35
+APPROACH_TOP_OFFSET_HEIGHT = -0.18
+APPROACH_FAR_TOP_OFFSET_HEIGHT = 0.02
+APPROACH_NEAR_BOTTOM_OFFSET_HEIGHT = 0.72
+APPROACH_FAR_BOTTOM_OFFSET_HEIGHT = 1.08
 CLASS_COLORS = {
     "person": (86, 220, 255),
     "bicycle": (102, 236, 161),
+    "car": (208, 137, 255),
     "motorcycle": (107, 179, 255),
+    "bus": (139, 190, 255),
     "truck": (255, 167, 70),
+    "traffic light": (82, 242, 157),
+    "stop sign": (80, 80, 255),
 }
 ZONE_COLORS = {
     "TRUCK_TURN_ZONE": (255, 225, 70),
@@ -67,20 +89,29 @@ app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = MAX_UPLOAD_BYTES
 INPUT_DIR.mkdir(exist_ok=True)
 OUTPUT_DIR.mkdir(exist_ok=True)
+MODEL_DIR.mkdir(exist_ok=True)
+
+
+def validate_zones(zones: Any) -> dict[str, list[list[float]]]:
+    if not isinstance(zones, dict) or set(zones) != set(ZONE_NAMES):
+        raise ValueError(f"zones must contain exactly: {', '.join(ZONE_NAMES)}")
+    validated: dict[str, list[list[float]]] = {}
+    for name, points in zones.items():
+        if not isinstance(points, list) or len(points) < 3 or any(not isinstance(point, list) or len(point) != 2 for point in points):
+            raise ValueError(f"{name} must contain at least three [x, y] points")
+        try:
+            numeric_points = [[round(float(value), 5) for value in point] for point in points]
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"{name} coordinates must be numeric") from exc
+        if any(not 0 <= value <= 1 for point in numeric_points for value in point):
+            raise ValueError(f"{name} coordinates must be normalized between 0 and 1")
+        validated[name] = numeric_points
+    return validated
 
 
 def load_zones() -> dict[str, list[list[float]]]:
     with ZONES_PATH.open("r", encoding="utf-8") as handle:
-        zones = json.load(handle)
-    required = {"TRUCK_TURN_ZONE", "ROAD_USER_APPROACH_ZONE", "CONFLICT_ZONE"}
-    if set(zones) != required:
-        raise ValueError(f"zones.json must contain exactly: {', '.join(sorted(required))}")
-    for name, points in zones.items():
-        if len(points) < 3 or any(len(point) != 2 for point in points):
-            raise ValueError(f"{name} must contain at least three [x, y] points")
-        if any(not 0 <= value <= 1 for point in points for value in point):
-            raise ValueError(f"{name} coordinates must be normalized between 0 and 1")
-    return zones
+        return validate_zones(json.load(handle))
 
 
 def blank_frame(message: str = "Upload a video to begin real YOLO processing") -> bytes:
@@ -99,6 +130,7 @@ class DetectionEngine:
         self.stop_event = threading.Event()
         self.worker: threading.Thread | None = None
         self.model: YOLO | None = None
+        self.pose_analyzer = PoseBehaviorAnalyzer(POSE_MODEL_PATH)
         self.source_path: Path | None = None
         self.frame_number = 0
         self.latest_jpeg = blank_frame()
@@ -111,6 +143,7 @@ class DetectionEngine:
         self.smoothed_truck_box: np.ndarray | None = None
         self.last_dynamic_zones: dict[str, list[list[float]]] | None = None
         self.truck_lost_frames = 0
+        self.fixed_zones = load_zones()
         self.status: dict[str, Any] = self._initial_status()
 
     @staticmethod
@@ -133,6 +166,8 @@ class DetectionEngine:
                 "track_id": None,
                 "lost_frames": 0,
             },
+            "scene_context": {"vehicles": [], "traffic_controls": []},
+            "pedestrian_analysis": empty_analysis("MONITORING", "WAITING FOR VIDEO"),
         }
 
     def snapshot(self) -> dict[str, Any]:
@@ -145,6 +180,7 @@ class DetectionEngine:
                     "blind_side": self.blind_side,
                     "zones_visible": self.zones_visible,
                     "tracking_available": YOLO_TRACKING_AVAILABLE,
+                    "fixed_zones": self.fixed_zones,
                 }
             )
             return snapshot
@@ -170,6 +206,17 @@ class DetectionEngine:
                 self.warning_reset_requested = True
             return True, "Zone settings updated."
 
+    def update_fixed_zones(self, zones: Any) -> tuple[bool, str]:
+        try:
+            validated = validate_zones(zones)
+        except ValueError as exc:
+            return False, str(exc)
+        with self.lock:
+            ZONES_PATH.write_text(json.dumps(validated, indent=2) + "\n", encoding="utf-8")
+            self.fixed_zones = validated
+            self.warning_reset_requested = True
+            return True, "Fixed-camera zones saved."
+
     def _reset_primary_truck(self) -> None:
         self.selected_truck_id = None
         self.smoothed_truck_box = None
@@ -188,7 +235,17 @@ class DetectionEngine:
             if self.worker and self.worker.is_alive():
                 return False, "A video is already being processed. Stop it before starting another."
             if not MODEL_PATH.is_file():
-                return False, f"YOLO model not found: {MODEL_PATH}"
+                return False, (
+                    f"YOLO model not found: {MODEL_PATH}. "
+                    "Run start.ps1 once to install dependencies and download yolo11n.pt, "
+                    "or set YOLO_MODEL_PATH to an existing model file."
+                )
+            if not POSE_MODEL_PATH.is_file():
+                return False, (
+                    f"MediaPipe pose model not found: {POSE_MODEL_PATH}. "
+                    "Run start.ps1 once to download pose_landmarker_lite.task, "
+                    "or set MEDIAPIPE_POSE_MODEL_PATH to an existing model file."
+                )
             self.stop_event.clear()
             self.source_path = source_path
             self.frame_number = 0
@@ -225,9 +282,10 @@ class DetectionEngine:
         visible_state = "MONITORING"
         previous_frame_time: float | None = None
         fps_ema = 0.0
+        processed_frame_index = 0
         try:
-            fixed_zones = load_zones()
             model = self._load_model()
+            self.pose_analyzer.start()
             capture = cv2.VideoCapture(str(self.source_path))
             if not capture.isOpened():
                 raise ValueError("OpenCV could not open the uploaded video.")
@@ -240,6 +298,7 @@ class DetectionEngine:
                 ok, frame = capture.read()
                 if not ok:
                     break
+                processed_frame_index += 1
 
                 inference_start = time.perf_counter()
                 inference_options = {
@@ -269,6 +328,7 @@ class DetectionEngine:
                     zone_mode = self.zone_mode
                     blind_side = self.blind_side
                     zones_visible = self.zones_visible
+                    fixed_zones = self.fixed_zones
 
                 primary_truck, dynamic_zones, primary_status = self._update_primary_truck(
                     detections, frame.shape[1], frame.shape[0], blind_side
@@ -290,6 +350,21 @@ class DetectionEngine:
                             safe_frames = 0
                     else:
                         visible_state = raw_state
+
+                pose_timestamp_ms = round(processed_frame_index * 1000.0 / source_fps) if source_fps and source_fps > 0 else processed_frame_index * 33
+                try:
+                    pedestrian_analysis = self.pose_analyzer.analyze(
+                        frame,
+                        detections,
+                        primary_truck,
+                        active_zones,
+                        visible_state,
+                        pose_timestamp_ms,
+                        self._inside,
+                    )
+                except Exception as exc:
+                    pedestrian_analysis = empty_analysis(visible_state, "MEDIAPIPE ANALYSIS ERROR")
+                    pedestrian_analysis["error"] = str(exc)
 
                 annotated = self._draw_frame(
                     frame,
@@ -324,8 +399,10 @@ class DetectionEngine:
                             "frame_index": self.frame_number,
                             "error": None,
                             "primary_truck": primary_status,
+                            "scene_context": self._scene_context(detections),
                             "zones_active": bool(zones_visible and active_zones),
                             "zone_polygons": active_zones,
+                            "pedestrian_analysis": pedestrian_analysis,
                         }
                     )
                     self.frame_ready.notify_all()
@@ -340,6 +417,7 @@ class DetectionEngine:
                 self.frame_number += 1
                 self.frame_ready.notify_all()
         finally:
+            self.pose_analyzer.close()
             if capture is not None:
                 capture.release()
             with self.lock:
@@ -383,6 +461,16 @@ class DetectionEngine:
     def _box_area(item: dict[str, Any]) -> float:
         x1, y1, x2, y2 = item["box"]
         return max(0.0, x2 - x1) * max(0.0, y2 - y1)
+
+    @staticmethod
+    def _scene_context(detections: list[dict[str, Any]]) -> dict[str, list[str]]:
+        """Expose detected road context without treating it as a signal-state decision."""
+        return {
+            "vehicles": [item["class"] for item in detections if item["class"] in VEHICLE_CLASSES],
+            "traffic_controls": [
+                item["class"] for item in detections if item["class"] in TRAFFIC_CONTROL_CLASSES
+            ],
+        }
 
     def _update_primary_truck(
         self,
@@ -474,23 +562,17 @@ class DetectionEngine:
             normalized(x2 + TRUCK_ZONE_PAD_WIDTH * truck_width, y2 + TRUCK_ZONE_PAD_HEIGHT * truck_height),
             normalized(x1 - TRUCK_ZONE_PAD_WIDTH * truck_width, y2 + TRUCK_ZONE_PAD_HEIGHT * truck_height),
         ]
-        conflict_near_x = side_edge + direction * CONFLICT_NEAR_GAP_WIDTH * truck_width
-        conflict_outer_x = conflict_near_x + direction * CONFLICT_OUTWARD_WIDTH * truck_width
-        approach_outer_x = conflict_outer_x + direction * APPROACH_OUTWARD_WIDTH * truck_width
-
-        conflict_outer_top = y1 + CONFLICT_OUTER_TOP_HEIGHT * truck_height
-        conflict_outer_bottom = y1 + CONFLICT_OUTER_BOTTOM_HEIGHT * truck_height
         conflict_zone = [
-            normalized(conflict_near_x, y1 + CONFLICT_NEAR_TOP_HEIGHT * truck_height),
-            normalized(conflict_outer_x, conflict_outer_top),
-            normalized(conflict_outer_x, conflict_outer_bottom),
-            normalized(conflict_near_x, y1 + CONFLICT_NEAR_BOTTOM_HEIGHT * truck_height),
+            normalized(side_edge + direction * CONFLICT_NEAR_GAP_WIDTH * truck_width, y1 + CONFLICT_TOP_OFFSET_HEIGHT * truck_height),
+            normalized(side_edge + direction * CONFLICT_FAR_REACH_WIDTH * truck_width, y1 + CONFLICT_FAR_TOP_OFFSET_HEIGHT * truck_height),
+            normalized(side_edge + direction * CONFLICT_FAR_REACH_WIDTH * truck_width, y2 + CONFLICT_FAR_BOTTOM_OFFSET_HEIGHT * truck_height),
+            normalized(side_edge + direction * CONFLICT_NEAR_GAP_WIDTH * truck_width, y2 + CONFLICT_NEAR_BOTTOM_OFFSET_HEIGHT * truck_height),
         ]
         approach_zone = [
-            normalized(conflict_outer_x, conflict_outer_top),
-            normalized(approach_outer_x, y1 + APPROACH_OUTER_TOP_HEIGHT * truck_height),
-            normalized(approach_outer_x, y1 + APPROACH_OUTER_BOTTOM_HEIGHT * truck_height),
-            normalized(conflict_outer_x, conflict_outer_bottom),
+            normalized(side_edge + direction * APPROACH_NEAR_REACH_WIDTH * truck_width, y1 + APPROACH_TOP_OFFSET_HEIGHT * truck_height),
+            normalized(side_edge + direction * APPROACH_FAR_REACH_WIDTH * truck_width, y1 + APPROACH_FAR_TOP_OFFSET_HEIGHT * truck_height),
+            normalized(side_edge + direction * APPROACH_FAR_REACH_WIDTH * truck_width, y2 + APPROACH_FAR_BOTTOM_OFFSET_HEIGHT * truck_height),
+            normalized(side_edge + direction * APPROACH_NEAR_REACH_WIDTH * truck_width, y2 + APPROACH_NEAR_BOTTOM_OFFSET_HEIGHT * truck_height),
         ]
         return {
             "TRUCK_TURN_ZONE": truck_zone,
@@ -515,7 +597,7 @@ class DetectionEngine:
         if zone_mode == ZONE_MODE_MOVING:
             if primary_truck is None:
                 return "MONITORING"
-            road_users = [item for item in detections if item["class"] in {"person", "bicycle", "motorcycle"}]
+            road_users = [item for item in detections if item["class"] in VULNERABLE_ROAD_USER_CLASSES]
             if any(self._inside(item["contact"], zones["CONFLICT_ZONE"]) for item in road_users):
                 return "DANGER"
             if any(self._inside(item["contact"], zones["ROAD_USER_APPROACH_ZONE"]) for item in road_users):
@@ -528,7 +610,7 @@ class DetectionEngine:
         )
         if not truck_present:
             return "MONITORING"
-        road_users = [item for item in detections if item["class"] in {"person", "bicycle", "motorcycle"}]
+        road_users = [item for item in detections if item["class"] in VULNERABLE_ROAD_USER_CLASSES]
         if any(self._inside(item["contact"], zones["CONFLICT_ZONE"]) for item in road_users):
             return "DANGER"
         if any(self._inside(item["contact"], zones["ROAD_USER_APPROACH_ZONE"]) for item in road_users):
@@ -564,43 +646,35 @@ class DetectionEngine:
     ) -> np.ndarray:
         height, width = frame.shape[:2]
         if zones_visible and zones is not None:
+            overlay = frame.copy()
             polygons: dict[str, np.ndarray] = {}
-            visible_zone_names = (
-                ("CONFLICT_ZONE", "ROAD_USER_APPROACH_ZONE")
-                if zone_mode == ZONE_MODE_MOVING
-                else tuple(zones)
-            )
-            for name in visible_zone_names:
-                points = zones[name]
+            for name, points in zones.items():
                 polygon = self._pixel_polygon(points, width, height)
                 polygons[name] = polygon
-                overlay = frame.copy()
                 cv2.fillPoly(overlay, [polygon], ZONE_COLORS[name])
-                if zone_mode == ZONE_MODE_MOVING:
-                    opacity = (
-                        MOVING_CONFLICT_OPACITY
-                        if name == "CONFLICT_ZONE"
-                        else MOVING_APPROACH_OPACITY
-                    )
-                else:
-                    opacity = 0.20 if state == "DANGER" and self.frame_number % 2 == 0 else 0.12
-                cv2.addWeighted(overlay, opacity, frame, 1.0 - opacity, 0, frame)
+            zone_opacity = 0.20 if state == "DANGER" and self.frame_number % 2 == 0 else 0.12
+            cv2.addWeighted(overlay, zone_opacity, frame, 1.0 - zone_opacity, 0, frame)
             for name, polygon in polygons.items():
                 color = ZONE_COLORS[name]
-                cv2.polylines(frame, [polygon], True, color, ZONE_OUTLINE_WIDTH, cv2.LINE_AA)
+                cv2.polylines(frame, [polygon], True, color, 2, cv2.LINE_AA)
                 anchor = tuple(polygon[0])
-                label = name
-                if zone_mode == ZONE_MODE_MOVING:
-                    label = "CONFLICT" if name == "CONFLICT_ZONE" else "APPROACH"
                 cv2.putText(
                     frame,
-                    label,
+                    name,
                     (int(anchor[0]) + 6, max(18, int(anchor[1]) + 20)),
                     cv2.FONT_HERSHEY_SIMPLEX,
                     0.48,
                     color,
                     2,
                 )
+
+            if zone_mode == ZONE_MODE_MOVING and primary_truck is not None:
+                truck_box = self.smoothed_truck_box
+                conflict_polygon = polygons.get("CONFLICT_ZONE")
+                if truck_box is not None and conflict_polygon is not None:
+                    truck_center = (round(float((truck_box[0] + truck_box[2]) / 2)), round(float((truck_box[1] + truck_box[3]) / 2)))
+                    conflict_center = tuple(np.mean(conflict_polygon, axis=0).astype(int))
+                    cv2.line(frame, truck_center, conflict_center, ZONE_COLORS["CONFLICT_ZONE"], 2, cv2.LINE_AA)
 
         for item in detections:
             x1, y1, x2, y2 = [round(value) for value in item["box"]]
@@ -611,8 +685,17 @@ class DetectionEngine:
                 label += " PRIMARY"
                 if item.get("track_id") is not None:
                     label += f" ID {item['track_id']}"
-            cv2.rectangle(frame, (x1, max(0, y1 - 24)), (x1 + max(120, len(label) * 10), y1), color, -1)
-            cv2.putText(frame, label, (x1 + 5, max(16, y1 - 6)), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (8, 14, 18), 2)
+            behavior = item.get("behavior")
+            behavior_label = ""
+            if behavior:
+                behavior_label = f"{behavior['activity']} | {behavior['head_orientation']}"
+            label_width = max(120, len(label) * 10, len(behavior_label) * 7)
+            label_height = 44 if behavior_label else 24
+            cv2.rectangle(frame, (x1, max(0, y1 - label_height)), (x1 + label_width, y1), color, -1)
+            label_y = max(16, y1 - (25 if behavior_label else 6))
+            cv2.putText(frame, label, (x1 + 5, label_y), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (8, 14, 18), 2)
+            if behavior_label:
+                cv2.putText(frame, behavior_label, (x1 + 5, max(16, y1 - 6)), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (8, 14, 18), 1)
             contact_x = round(item["contact"][0] * width)
             contact_y = round(item["contact"][1] * height)
             cv2.circle(frame, (contact_x, contact_y), 5, color, -1)
@@ -663,6 +746,20 @@ def api_settings():
     return jsonify({"ok": True, "message": message, "settings": engine.snapshot()})
 
 
+@app.get("/api/fixed-zones")
+def api_fixed_zones():
+    return jsonify({"zones": engine.snapshot()["fixed_zones"]})
+
+
+@app.post("/api/fixed-zones")
+def api_update_fixed_zones():
+    payload = request.get_json(silent=True) or {}
+    updated, message = engine.update_fixed_zones(payload.get("zones"))
+    if not updated:
+        return jsonify({"ok": False, "error": message}), 400
+    return jsonify({"ok": True, "message": message, "zones": engine.snapshot()["fixed_zones"]})
+
+
 @app.post("/api/start")
 def api_start():
     if engine.snapshot()["running"]:
@@ -698,5 +795,5 @@ def too_large(_error):
 
 
 if __name__ == "__main__":
-    app.run(host="127.0.0.1", port=5000, threaded=True, debug=False)
+    app.run(host="127.0.0.1", port=APP_PORT, threaded=True, debug=False)
 
