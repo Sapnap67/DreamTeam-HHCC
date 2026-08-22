@@ -1,123 +1,113 @@
 # BlindSpot Guardian
 
-BlindSpot Guardian is a 36-hour HHCC 2026 prototype for safer truck turns at pedestrian crossings. A camera mounted near a traffic light analyzes video for trucks and nearby vulnerable road users, then displays a warning when their detected positions enter a possible blind-spot conflict area.
+BlindSpot Guardian is a local Flask prototype that combines real YOLO detections with MediaPipe Pose landmarks on uploaded video. It displays actual detections for `person`, `bicycle`, `motorcycle`, and `truck`, plus conservative, observable pedestrian cues.
 
-> **Prototype only — not for road use.** The current warning is based on detection and geometric zone overlap. It is not a certified collision-prediction or traffic-control system.
+> **PROTOTYPE — NOT FOR ROAD USE.** The warning is a transparent zone-overlap rule, not verified collision prediction or production-ready safety technology.
 
-## What the prototype demonstrates
+## Start
 
-- Real YOLO inference on uploaded traffic video
-- Detection of `person`, `bicycle`, `motorcycle`, and `truck`
-- Bounding boxes, confidence values, inference time, and processing FPS
-- A **Fixed Intersection Camera** mode with configurable scene polygons
-- A **Moving-Camera Demo** mode whose zones follow the primary detected truck
-- Warning states: `MONITORING`, truck present/tracked, `CAUTION`, and `DANGER`
-- Short multi-frame confirmation and clearing delays to reduce alert flicker
-- Local processing: uploaded videos are removed after processing or reset
-
-## How it works
-
-```text
-Uploaded video → YOLO object detection → road-contact points
-              → truck/road-user zone checks → warning state → live browser display
-```
-
-The app uses the bottom-center of each bounding box as an approximate road-contact point. In fixed-camera mode, the points are checked against polygons in `zones.json`. In moving-camera mode, the polygons are generated relative to a smoothed primary-truck box for demonstration footage.
-
-## Project structure
-
-```text
-blindspot-guardian/
-├── app.py
-├── requirements.txt
-├── zones.json
-├── static/
-│   └── styles.css
-└── templates/
-    └── index.html
-```
-
-The app creates temporary `input/` and `output/` folders when it runs. Test videos, generated output, virtual environments, and YOLO weight files are intentionally excluded from GitHub.
-
-## Setup
-
-You need Python 3.10 or newer and the `yolo11n.pt` model file.
-
-### Windows (PowerShell)
+Open PowerShell in this project folder and run:
 
 ```powershell
-cd "path\to\blindspot-guardian"
-py -m venv .venv
-.\.venv\Scripts\Activate.ps1
-python -m pip install -r requirements.txt
-python -c "from ultralytics import YOLO; YOLO('yolo11n.pt')"
-python app.py
+.\start.ps1
 ```
 
-### macOS (Terminal)
+Then open <http://127.0.0.1:5000>.
 
-```bash
-cd "/path/to/blindspot-guardian"
-python3 -m venv .venv
-source .venv/bin/activate
-python -m pip install -r requirements.txt
-python -c "from ultralytics import YOLO; YOLO('yolo11n.pt')"
-python app.py
-```
-
-Then open [http://127.0.0.1:5000](http://127.0.0.1:5000).
-
-Press `Ctrl+C` in PowerShell or Terminal to stop the server.
-
-If the model is stored somewhere else, set `YOLO_MODEL_PATH` before starting:
+If port 5000 is already in use, choose another local port before launching:
 
 ```powershell
-# Windows PowerShell
-$env:YOLO_MODEL_PATH = "C:\path\to\yolo11n.pt"
-python app.py
+$env:APP_PORT = "5001"
+.\start.ps1
 ```
 
-```bash
-# macOS
-export YOLO_MODEL_PATH="/path/to/yolo11n.pt"
-python app.py
+Then open <http://127.0.0.1:5001>.
+
+The launcher creates a local Python 3.11 or 3.12 `.venv`, installs the Python packages, and downloads two small model files on first use:
+
+- YOLO: `models/yolo11n.pt`
+- MediaPipe Pose Landmarker Lite: `models/pose_landmarker_lite.task`
+
+It requires an internet connection only for those first downloads. If PowerShell blocks scripts, run:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\start.ps1
 ```
 
-## Using the demo
+To use different model files without copying them into `models/`, set `YOLO_MODEL_PATH` and/or `MEDIAPIPE_POSE_MODEL_PATH` before starting the app.
 
-1. Choose an MP4, MOV, AVI, MKV, or M4V traffic video.
-2. Select the zone mode and truck-turn side that fit the footage.
-3. Select **Start processing**.
-4. Watch the detections, zones, measured performance, and warning state.
-5. Select **Stop / reset** before loading another video.
+Python 3.11 or 3.12 is required. Python 3.13 and 3.14 are not supported by the selected MediaPipe package on Windows.
 
-Only one video is processed at a time. Uploaded files are temporary and the current version does not save a processed video.
+## Use
+
+1. Choose an MP4, MOV, AVI, MKV, or M4V video.
+2. Select **Start processing**.
+3. Watch the MJPEG stream, real detections, and measured performance.
+4. Select **Stop / reset** to stop the worker and remove the temporary upload.
+
+Only one processing job can run at a time. Uploaded files are placed temporarily in `input/` and removed when processing ends or is stopped. `output/` is reserved for future explicit exports; the current app streams frames without saving a processed copy.
+
+## Scene context detection
+
+The pretrained YOLO model also displays real detections for cars, buses, traffic lights, and stop signs, alongside people, bicycles, motorcycles, and trucks. Cars and buses provide scene context but do not replace the truck-specific blind-zone rule. A detected traffic light or stop sign only means the object is visible; this prototype does **not** read signal colour, infer right-of-way, or decide whether it is safe to cross.
 
 ## Zone configuration
 
-For a stationary intersection camera, edit `zones.json`. Every point is `[x, y]`, normalized from `0.0` to `1.0` from the top-left of the frame:
+The interface provides two zone modes.
 
-- `TRUCK_TURN_ZONE`: where a turning truck must be present
-- `ROAD_USER_APPROACH_ZONE`: where a person or two-wheeler is approaching
-- `CONFLICT_ZONE`: the higher-risk overlap area
+### Fixed Intersection Camera
 
-The moving-camera mode is useful for the demo video, but its truck-relative zones are not a substitute for calibrating a real fixed intersection camera.
+This is the intended deployment mode for a camera mounted on a stationary traffic-light pole. Fixed zones must be calibrated for the actual camera viewpoint: upload a representative clip, select a zone in the **Fixed-camera calibration** panel, click its corners on the live image, and choose **Save fixed zones**. The app saves the normalized coordinates to `zones.json` and uses them immediately. Each of the three zones needs at least three points. Recalibrate whenever the camera is moved or its view changes.
 
-## Current limitations
+### Moving-Camera Demo
 
-- It does not predict the truck's actual steering, turn signal, speed, or future path.
-- It does not estimate attention, pose, emotion, or head direction.
-- A pretrained model may classify an e-bike as a bicycle or motorcycle.
-- Detection quality depends on lighting, occlusion, perspective, and video quality.
-- The default fixed zones are generic and must be calibrated for a specific camera.
-- Dynamic zones are demonstration geometry, not validated blind-spot boundaries.
-- The prototype currently accepts uploaded video rather than a live roadside camera feed.
+This demonstration mode is the default for uploaded dashcam footage. It never creates zones until a real truck is detected. The largest truck is primary when genuine YOLO track IDs are unavailable. If real tracking is available, the previous primary ID is retained while visible. Each primary-truck box coordinate is smoothed with:
 
-## Responsible AI usage
+`smoothed = 0.25 * detected + 0.75 * previous`
 
-AI tools assisted with documentation, code generation, debugging, and explanation. The team owns the concept and engineering decisions and must review, understand, test, and meaningfully modify all assisted work. See [AI_USAGE.md](AI_USAGE.md) for the declaration.
+All dynamic geometry uses named truck-width and truck-height scale constants in `app.py`:
 
-## Team
+- `TRUCK_TURN_ZONE` expands the smoothed box horizontally and vertically.
+- `CONFLICT_ZONE` is a close trapezoid from the selected truck side to `1.10 × truck width` outward, with its vertical corners scaled by truck height.
+- `ROAD_USER_APPROACH_ZONE` starts farther out and reaches `2.35 × truck width`, with a taller truck-height-scaled vertical span.
+- Left-side mode mirrors the two trapezoids by changing the horizontal direction multiplier from `+1` to `-1`.
+- Every point is clipped to the video frame and then normalized for drawing and point-in-polygon checks.
 
-Dream Team — HHCC 2026 Prototype Development Track  
-Theme: **AI Reshaping the Automotive Industry**
+The last real truck-anchored geometry is held for at most five missing frames and then hidden. Reset Zone Tracking clears the smoothed box, selected ID, and retained geometry.
+
+### Warning states
+
+- Fixed mode: `MONITORING`, `TRUCK PRESENT`, `CAUTION`, and `DANGER` use the configured intersection polygons.
+- Moving mode: `MONITORING`, `TRUCK TRACKED`, `CAUTION`, and `DANGER` use real truck-relative geometry.
+- `DANGER` requires three consecutive matching frames and clears after five safe frames.
+
+The bottom-center of each bounding box is used as the approximate road-contact point. Danger clears after five non-danger frames.
+
+## MediaPipe pedestrian cues
+
+MediaPipe Pose Landmarker runs once per frame and estimates up to four poses. The app matches the nearest visible torso landmarks to the YOLO person selected as most relevant: a person in the conflict zone first, then one in the approach zone, then the largest visible person.
+
+- **Likely walking / likely standing:** short-term hip movement, normalized by the person's YOLO box height. Several frames are required before a label appears.
+- **Likely crouching:** a medium-confidence heuristic using visible hip, knee, and ankle geometry.
+- **Head vs. truck:** a low-confidence 2D nose-to-ear offset compared with the truck's horizontal direction. It is displayed only as an orientation proxy.
+- **Noticed truck?:** always `CANNOT BE INFERRED`. Body pose cannot establish awareness, eye contact, comprehension, or intent.
+- **Crossing advisory:** `DO NOT CROSS`, `WAIT — CONFLICT POSSIBLE`, `WAIT — TRUCK PRESENT`, or `CHECK SIGNAL AND TRAFFIC`, derived from the existing zone state. It never reports `SAFE TO CROSS`.
+
+The warning zone has priority over pose cues. For example, a person oriented toward the truck still receives `DO NOT CROSS` when the conflict zone is active.
+
+## Model behavior and limitations
+
+- Model: project-local `models/yolo11n.pt` by default; override with `YOLO_MODEL_PATH`
+- Inference: CPU, `imgsz=640`, confidence threshold `0.35`
+- Supported displayed classes: person, bicycle, car, motorcycle, bus, truck, traffic light, stop sign
+- A pretrained model may categorize an e-bike as bicycle or motorcycle; it does not provide a separate e-bike class here.
+- MediaPipe pose and coarse head-orientation cues are heuristic observations, not attention, emotion, awareness, or intent recognition.
+- No verified turn-intention or trajectory prediction is performed.
+- Moving-camera zones are demonstration geometry, not calibrated intersection zones.
+- Genuine YOLO track IDs are used only when the optional tracking dependency is installed; otherwise the largest truck is selected without displaying an ID.
+- Default zones are generic and must be calibrated for the actual camera view.
+- Detection quality depends on lighting, occlusion, perspective, video quality, and the pretrained model.
+- Activity labels need several consecutive frames and are less reliable without stable YOLO track IDs.
+- Webcam input is intentionally deferred until uploaded-video mode is proven reliable.
+
+
