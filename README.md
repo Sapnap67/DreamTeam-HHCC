@@ -28,6 +28,8 @@ The launcher creates a local Python 3.11 or 3.12 `.venv`, installs the Python pa
 - YOLO: `models/yolo11n.pt`
 - MediaPipe Pose Landmarker Lite: `models/pose_landmarker_lite.task`
 
+The ADE20K road/sidewalk model downloads into the normal Hugging Face cache the first time fixed-camera scene analysis runs.
+
 It requires an internet connection only for those first downloads. If PowerShell blocks scripts, run:
 
 ```powershell
@@ -59,7 +61,9 @@ The interface provides two zone modes.
 
 This is the intended deployment mode for a camera mounted on a stationary traffic-light pole. On the first frame of a fixed-camera clip, the app runs an ADE20K semantic-segmentation model to highlight **road** and **sidewalk** pixels and propose editable draft zones at their boundary. This general-scene model handles the elevated camera view better than the earlier street-level model. It downloads once on first use, so the computer needs internet access for that first analysis.
 
-The draft is not a safety decision and is never enabled automatically. Review it, choose **Use draft zones**, then adjust any corners in the **Fixed-camera calibration** panel and choose **Save fixed zones**. The app saves approved geometry to `zones.json` and uses it immediately. Each of the three zones needs at least three points. Recalibrate whenever the camera is moved or its view changes.
+The automatically detected surfaces are editable suggestions, not safety decisions. The surface editor supports any number of separate road and sidewalk polygons: select **Road surface** or **Sidewalk surface**, click a polygon's corners, choose **Finish surface**, and repeat for every separate area. Save the reviewed surface map with **Save road + sidewalks**. Surface geometry is stored in `surfaces.json` and is informational; it never triggers a warning.
+
+Review the independent zone draft, choose **Use auto zone draft** if it is useful, then adjust the three warning zones and choose **Save fixed zones**. Approved warning geometry is stored in `zones.json` and used immediately. Each warning zone needs at least three points. Recalibrate whenever the camera is moved or its view changes.
 
 ### Moving-Camera Demo
 
@@ -107,7 +111,7 @@ The warning zone has priority over pose cues. For example, a person oriented tow
 - No verified turn-intention or trajectory prediction is performed.
 - Moving-camera zones are demonstration geometry, not calibrated intersection zones.
 - Genuine YOLO track IDs are used only when the optional tracking dependency is installed; otherwise the largest truck is selected without displaying an ID.
-- Default zones are generic and must be calibrated for the actual camera view.
+- Generic default zones are disabled. Only reviewed and saved fixed-camera zones can drive warnings.
 - Detection quality depends on lighting, occlusion, perspective, video quality, and the pretrained model.
 - Activity labels need several consecutive frames and are less reliable without stable YOLO track IDs.
 - Webcam input is intentionally deferred until uploaded-video mode is proven reliable.
