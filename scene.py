@@ -17,7 +17,7 @@ import numpy as np
 SCENE_MODEL_ID = os.environ.get(
     "SCENE_SEGMENTATION_MODEL", "nvidia/segformer-b0-finetuned-ade-512-512"
 )
-MIN_COMPONENT_AREA = 0.008
+MIN_COMPONENT_AREA = 0.001
 
 
 def empty_scene(status: str = "NOT ANALYZED", error: str | None = None) -> dict[str, Any]:
@@ -32,7 +32,7 @@ def empty_scene(status: str = "NOT ANALYZED", error: str | None = None) -> dict[
 
 
 class RoadSidewalkAnalyzer:
-    """Lazy Cityscapes segmentation, run once for each fixed-camera clip."""
+    """Lazy ADE20K segmentation, run once for each fixed-camera clip."""
 
     def __init__(self) -> None:
         self._processor: Any | None = None
@@ -60,7 +60,7 @@ class RoadSidewalkAnalyzer:
             raise ValueError("The scene model must provide road and sidewalk labels.")
 
     @staticmethod
-    def _normalized_contours(mask: np.ndarray, limit: int = 3) -> list[list[list[float]]]:
+    def _normalized_contours(mask: np.ndarray, limit: int | None = None) -> list[list[list[float]]]:
         height, width = mask.shape[:2]
         minimum_area = width * height * MIN_COMPONENT_AREA
         contours, _ = cv2.findContours(mask.astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
@@ -77,7 +77,8 @@ class RoadSidewalkAnalyzer:
                 for point in simplified
             ]
             polygons.append((area, points))
-        return [points for _, points in sorted(polygons, reverse=True)[:limit]]
+        ordered = [points for _, points in sorted(polygons, key=lambda item: item[0], reverse=True)]
+        return ordered if limit is None else ordered[:limit]
 
     @staticmethod
     def _largest_component(mask: np.ndarray) -> np.ndarray:
