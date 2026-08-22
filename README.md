@@ -1,116 +1,84 @@
 # BlindSpot Guardian
 
-BlindSpot Guardian is an HHCC 2026 prototype for safer heavy-vehicle turns at pedestrian crossings. A roadside camera analyzes traffic video for buses, trucks, and vulnerable road users, then drives a bilingual pedestrian warning signal when an image-space risk heuristic detects sustained proximity or converging motion.
+BlindSpot Guardian is a 36-hour HHCC 2026 prototype for exploring truck and road-user proximity in traffic video. It applies real YOLO detections and an image-space motion heuristic to show an understandable potential-collision-risk warning.
 
-> **Prototype only — not for road use.** This is not certified collision prediction or traffic-control technology.
+> **Prototype only — not for road use.** This is a prototype image-space proximity and motion heuristic, not accurate crash prediction or a certified safety system.
 
-## What the prototype demonstrates
+## Features
 
-- Real YOLO inference on uploaded traffic video
-- Detection of `person`, `bicycle`, `car`, `motorcycle`, `bus`, and `truck`
-- Selection and tracking of a primary bus or truck
-- Image-space proximity and short motion-history analysis
-- A bilingual pedestrian signal with `MONITORING`, `CAUTION`, and `DANGER` states
-- Explainable evidence showing why the current state was selected
-- Multi-frame confirmation and clearing delays to reduce alert flicker
-- Bounding boxes, confidence values, inference time, and processing FPS
-- A clearly marked signal-test mode that does not alter AI results
+- Real YOLO detection of `person`, `bicycle`, `car`, `motorcycle`, `bus`, and `truck`
+- Bounding boxes, confidence, inference time, and processing FPS
+- Optional MediaPipe Pose Landmarker Lite observations for one selected real person crop, evaluated every third processed frame
+- Separate caution chime and two-pulse danger alert, each emitted once per active risk episode
+- Short smoothed motion histories using genuine YOLO IDs or local frame-to-frame association
+- Multi-frame `MONITORING`, `VEHICLE TRACKED`, `CAUTION`, and `DANGER` warning states
 - Local processing with temporary upload removal
-
-Cars remain visible as detections but do not trigger the pedestrian warning. Only people, bicycles, and motorcycles are treated as vulnerable road users.
-
-## How it works
-
-```text
-Uploaded video → YOLO detections → short object histories
-              → heavy-vehicle/road-user risk evidence
-              → warning hysteresis → pedestrian warning signal
-```
-
-The bottom-center of each bounding box is used as an approximate road-contact point. The app compares image-space distance, monitored side, lower safety-margin overlap, decreasing separation, and converging motion. It does not measure real-world distance or speed.
-
-## Project structure
-
-```text
-blindspot-guardian/
-├── app.py
-├── requirements.txt
-├── start.bat
-├── static/
-│   └── styles.css
-└── templates/
-    └── index.html
-```
-
-Test videos, output files, virtual environments, runtime caches, and YOLO weights are intentionally excluded from GitHub.
 
 ## Setup
 
-You need Python 3.10 or newer.
+Python 3.10 or newer is recommended.
 
-### Windows: easiest method
+### Easy Windows startup
 
-Place `yolo11n.pt` in the project folder, then double-click `start.bat`.
+Double-click `start.bat`. On this computer it reuses the existing YOLO Python environment. On a new Windows computer, its first run creates `.venv`, installs `requirements.txt`, and then starts the application. It also opens <http://127.0.0.1:5000> automatically.
 
-### Windows: PowerShell
+Keep the command window open while using BlindSpot Guardian. Press `Ctrl+C` in that window to stop it.
+
+To enable the optional pedestrian-observation card, double-click `download_pose_model.bat` once. It downloads the official MediaPipe Pose Landmarker Lite task file over HTTPS into the ignored local `models` folder. If MediaPipe or the model is missing, the interface says it is unavailable and the YOLO warning system keeps working.
+
+### Windows (PowerShell)
 
 ```powershell
 cd "path\to\blindspot-guardian"
 py -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install -r requirements.txt
-python -c "from ultralytics import YOLO; YOLO('yolo11n.pt')"
 python app.py
 ```
 
-### macOS: Terminal
+### macOS (Terminal)
 
 ```bash
 cd "/path/to/blindspot-guardian"
 python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install -r requirements.txt
-python -c "from ultralytics import YOLO; YOLO('yolo11n.pt')"
 python app.py
 ```
 
-Open [http://127.0.0.1:5000](http://127.0.0.1:5000). Press `Ctrl+C` to stop the server.
+Open <http://127.0.0.1:5000>. Press `Ctrl+C` to stop. The included `yolo11n.pt` is used by default. If the model is elsewhere, set `YOLO_MODEL_PATH` to its full path before running the app.
 
-If the model is elsewhere, set `YOLO_MODEL_PATH` to its full path before starting.
-
-## Using the demo
+## Demo
 
 1. Choose an MP4, MOV, AVI, MKV, or M4V traffic video.
-2. Select the monitored turn direction.
+2. Select the truck blind side.
 3. Select **Start processing**.
-4. Watch the real detections, evidence panel, performance, and pedestrian signal.
-5. Use the advanced signal test only to demonstrate the warning hardware UI; it is visibly labeled as not being AI output.
-6. Select **Stop / reset** before loading another video.
+4. Watch the real detections, measured performance, warning state, and reason.
+5. Select **Stop / reset** before another video.
 
-Only one video is processed at a time. Uploaded files are temporary and processed video is not saved.
+Only one video is processed at a time. Uploads are temporary; processed video is not saved.
 
-## Warning states
+## Risk heuristic
 
-- **MONITORING — NO WARNING:** no supported heavy-vehicle/road-user risk evidence; this is not permission to cross
-- **CAUTION — HEAVY VEHICLE NEAR CROSSING:** a vulnerable road user remains near the monitored side of a tracked bus or truck
-- **DANGER — BLIND-SPOT COLLISION RISK:** stronger proximity or converging-motion evidence persists for multiple frames
+The selected bus or truck is compared with detected people, bicycles, and motorcycles. Cars remain visible YOLO detections but cannot activate the pedestrian warning. The internal heuristic considers smoothed bottom-center motion, decreasing image-space distance, projected path convergence, selected blind-side context, lower-heavy-vehicle safety-margin overlap, confidence, and multi-frame persistence. The internal safety margin is never drawn.
 
-The displayed evidence comes from the backend calculation. No crash probability is claimed.
+`DANGER` requires four consecutive supported frames and six safe frames to clear. This reduces warning flicker and prevents a truck plus an unrelated road user from automatically producing danger.
 
-## Current limitations
+## Limitations
 
-- Image-space distance is not real-world distance.
-- The prototype does not reliably predict steering, turn signals, speed, driver intention, or future trajectories.
-- A pretrained model may classify an e-bike as a bicycle or motorcycle.
-- Detection and tracking quality depend on lighting, occlusion, perspective, and video quality.
-- Thresholds require testing and calibration for a specific stationary roadside camera.
-- Uploaded video is supported; a live roadside camera feed is not yet implemented.
+- No steering, turn-signal, driver-intent, crash, turn, or calibrated trajectory prediction
+- No real-world distance or speed measurement
+- Optional pose cues are conservative observations only; pedestrian awareness, intent, attention, and emotion cannot be inferred
+- Quality depends on lighting, occlusion, perspective, and video quality
+- Image-space behavior varies with camera motion and perspective
+- Uploaded video is supported; a live roadside feed is not yet implemented
 
 ## Responsible AI usage
 
-AI tools assisted with documentation, code generation, debugging, and explanation. The team owns the concept and engineering decisions and must review, understand, test, and meaningfully modify all assisted work. See [AI_USAGE.md](AI_USAGE.md).
+AI assisted with documentation, code generation, debugging, and explanation. The team owns the concept and decisions and must review, understand, test, and meaningfully modify all assisted work. See [AI_USAGE.md](AI_USAGE.md).
 
 ## Team
 
 Dream Team — HHCC 2026 Prototype Development Track  
 Theme: **AI Reshaping the Automotive Industry**
+
