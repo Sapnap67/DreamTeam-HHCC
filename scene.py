@@ -15,10 +15,8 @@ import numpy as np
 
 
 SCENE_MODEL_ID = os.environ.get(
-    "SCENE_SEGMENTATION_MODEL", "nvidia/segformer-b0-finetuned-cityscapes-1024-1024"
+    "SCENE_SEGMENTATION_MODEL", "nvidia/segformer-b0-finetuned-ade-512-512"
 )
-ROAD_CLASS_ID = 0
-SIDEWALK_CLASS_ID = 1
 MIN_COMPONENT_AREA = 0.008
 
 
@@ -40,6 +38,8 @@ class RoadSidewalkAnalyzer:
         self._processor: Any | None = None
         self._model: Any | None = None
         self._torch: Any | None = None
+        self._road_class_ids: list[int] = []
+        self._sidewalk_class_ids: list[int] = []
 
     def _load(self) -> None:
         if self._model is not None:
@@ -51,6 +51,13 @@ class RoadSidewalkAnalyzer:
         self._processor = SegformerImageProcessor.from_pretrained(SCENE_MODEL_ID)
         self._model = SegformerForSemanticSegmentation.from_pretrained(SCENE_MODEL_ID)
         self._model.eval()
+        labels = {int(class_id): str(name).lower() for class_id, name in self._model.config.id2label.items()}
+        self._road_class_ids = [class_id for class_id, name in labels.items() if name == "road"]
+        self._sidewalk_class_ids = [
+            class_id for class_id, name in labels.items() if name in {"sidewalk", "pavement"}
+        ]
+        if not self._road_class_ids or not self._sidewalk_class_ids:
+            raise ValueError("The scene model must provide road and sidewalk labels.")
 
     @staticmethod
     def _normalized_contours(mask: np.ndarray, limit: int = 3) -> list[list[list[float]]]:
@@ -138,8 +145,8 @@ class RoadSidewalkAnalyzer:
                 logits, size=frame.shape[:2], mode="bilinear", align_corners=False
             )
             labels = logits.argmax(dim=1)[0].cpu().numpy().astype(np.uint8)
-            road = (labels == ROAD_CLASS_ID).astype(np.uint8)
-            sidewalk = (labels == SIDEWALK_CLASS_ID).astype(np.uint8)
+            road = np.isin(labels, self._road_class_ids).astype(np.uint8)
+            sidewalk = np.isin(labels, self._sidewalk_class_ids).astype(np.uint8)
             return {
                 "status": "DRAFT READY",
                 "error": None,
