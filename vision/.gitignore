@@ -1,0 +1,10 @@
+.venv/
+.dependency-check*/
+__pycache__/
+models/*.pt
+models/*.task
+input/*
+!input/.gitkeep
+output/*
+!output/.gitkeep
+
