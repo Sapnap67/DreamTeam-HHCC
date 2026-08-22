@@ -1,48 +1,27 @@
-# AI Usage Declaration
+# AI-assisted development note
 
-This project uses AI tools as assistants. The team remains responsible for the core concept, product decisions, implementation, testing, and presentation, and team members must understand and meaningfully modify all AI-assisted work.
+This prototype was developed with AI coding assistance. The team should review, run, and be able to explain every part before presenting it.
 
-## Tools
+## What the code does
 
-### ChatGPT
+1. `app.py` runs YOLO on each uploaded-video frame and keeps relevant road-user, vehicle, and traffic-control detections.
+2. `scene.py` proposes road and sidewalk polygons. A person can correct and save any number of surface polygons; they are informational and never drive warnings.
+3. The primary truck anchors demo conflict polygons, or reviewed `zones.json` geometry supplies fixed-camera polygons.
+4. `behavior.py` runs MediaPipe Pose Landmarker and matches the nearest pose to the most relevant YOLO person.
+5. A short pose history produces conservative `LIKELY WALKING`, `LIKELY STANDING`, or `LIKELY CROUCHING` labels.
+6. Nose position relative to the ears provides a low-confidence head-orientation proxy toward or away from the detected truck.
+7. `crossing_advisory()` uses only the zone warning state. Pose, head direction, and automatic surface suggestions cannot cancel or create a warning.
 
-Used for:
+## Claims the team must not make
 
-- Interpreting the competition rules and judging criteria
-- Discussing feasibility, scope, risks, and 36-hour MVP planning
-- Explaining computer-vision concepts and public documentation
-- Identifying possible technical or originality problems
-- Drafting prompts and documentation
+- The system cannot know whether a pedestrian noticed or understood the truck.
+- Head orientation is not eye gaze or attention detection.
+- The system cannot guarantee that crossing is safe.
+- The zones are not calibrated for a real intersection unless the team measures and validates them.
+- This prototype is not ready for road deployment.
 
-### OpenAI Codex
+## Suggested judge explanation
 
-Planned and/or used for:
+“YOLO tells us which road users are present. MediaPipe gives us observable pose cues such as likely movement and coarse head orientation. Those cues help explain the scene, but our warning decision remains conservative and comes from truck/person conflict zones. We intentionally do not claim to read awareness or certify safety.”
 
-- Generating code from team-written requirements
-- Debugging and explaining errors
-- Suggesting code structure and implementation alternatives
-- Reviewing code for clarity and reliability
 
-All generated code must be reviewed, tested, understood, and meaningfully modified by the team before submission.
-
-## Team Contribution
-
-The team:
-
-- Selects and owns the final project concept
-- Makes the key design and engineering decisions
-- Integrates, modifies, and tests the implementation
-- Verifies the prototype's behavior and limitations
-- Creates and delivers the final demonstration and presentation
-
-## Limitations and Transparency
-
-AI output may be incomplete or incorrect. The team verifies AI-assisted content and does not present unvalidated prototype behavior as production-ready automotive safety technology.
-
-This document will be updated as AI tools are used during development.
-
-## Usage Log
-
-| Date | Tool | Purpose | Team review or modification |
-| --- | --- | --- | --- |
-| 2026-08-21 | ChatGPT | Rule interpretation, feasibility evaluation, and repository setup guidance | The team reviewed the information and retained control of all project decisions |
