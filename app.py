@@ -18,11 +18,14 @@ from flask import Flask, Response, jsonify, render_template, request
 from ultralytics import YOLO
 from werkzeug.utils import secure_filename
 
+from behavior import PoseBehaviorAnalyzer, unavailable_observation
+
 
 BASE_DIR = Path(__file__).resolve().parent
 INPUT_DIR = BASE_DIR / "input"
 OUTPUT_DIR = BASE_DIR / "output"
 MODEL_PATH = Path(os.environ.get("YOLO_MODEL_PATH", BASE_DIR / "yolo11n.pt"))
+POSE_MODEL_PATH = Path(os.environ.get("POSE_MODEL_PATH", BASE_DIR / "models" / "pose_landmarker_lite.task"))
 ALLOWED_EXTENSIONS = {".mp4", ".mov", ".avi", ".mkv", ".m4v"}
 MAX_UPLOAD_BYTES = 500 * 1024 * 1024
 RELEVANT_CLASSES = {0: "person", 1: "bicycle", 2: "car", 3: "motorcycle", 5: "bus", 7: "truck"}
@@ -30,6 +33,8 @@ BLIND_SIDES = {"right", "left"}
 SMOOTHING_ALPHA = 0.25
 MAX_TRUCK_LOST_FRAMES = 5
 YOLO_TRACKING_AVAILABLE = importlib.util.find_spec("lap") is not None
+POSE_ANALYSIS_INTERVAL_FRAMES = 3
+POSE_RESULT_RETENTION_FRAMES = 5
 
 # Image-space motion tracking and risk configuration.
 POSITION_SMOOTHING_ALPHA = 0.35
@@ -105,6 +110,16 @@ class DetectionEngine:
         self.session_started_at: str | None = None
         self.last_primary_class: str | None = None
         self.last_primary_confidence: float | None = None
+        self.pose_analyzer = PoseBehaviorAnalyzer(POSE_MODEL_PATH)
+        self.latest_pose_observation = unavailable_observation()
+        self.last_pose_frame = -POSE_RESULT_RETENTION_FRAMES - 1
+        self.last_pose_person_key: str | None = None
+        self.risk_episode_id = 0
+        self.active_risk_episode = False
+        self.caution_sound_emitted = False
+        self.danger_sound_emitted = False
+        self.sound_event_counter = 0
+        self.latest_sound_event: dict[str, Any] | None = None
         self.status: dict[str, Any] = self._initial_status()
 
     @staticmethod
@@ -130,6 +145,8 @@ class DetectionEngine:
             "timeline": [],
             "session_summary": DetectionEngine._empty_session_summary(),
             "session_started_at": None,
+            "pedestrian_observation": unavailable_observation(),
+            "sound_event": None,
         }
 
     @staticmethod
@@ -159,6 +176,7 @@ class DetectionEngine:
             "danger_persistence_frames": 0,
             "danger_required_frames": DANGER_REQUIRED_FRAMES,
             "road_user_class": None,
+            "road_user_track_key": None,
         }
 
     def snapshot(self) -> dict[str, Any]:
@@ -183,6 +201,38 @@ class DetectionEngine:
         self.session_started_at = datetime.now(timezone.utc).isoformat() if started else None
         self.last_primary_class = None
         self.last_primary_confidence = None
+        self._reset_sound_events()
+
+    def _reset_sound_events(self) -> None:
+        self.risk_episode_id = 0
+        self.active_risk_episode = False
+        self.caution_sound_emitted = False
+        self.danger_sound_emitted = False
+        self.latest_sound_event = None
+
+    def _update_sound_event(self, previous_state: str, state: str) -> None:
+        risky_states = {"CAUTION", "DANGER"}
+        if state in risky_states and not self.active_risk_episode:
+            self.risk_episode_id += 1
+            self.active_risk_episode = True
+            self.caution_sound_emitted = False
+            self.danger_sound_emitted = False
+        cue: str | None = None
+        if state == "CAUTION" and not self.caution_sound_emitted:
+            cue = "CAUTION_CHIME"
+            self.caution_sound_emitted = True
+        elif state == "DANGER" and not self.danger_sound_emitted:
+            cue = "DANGER_TWO_PULSE"
+            self.danger_sound_emitted = True
+        if cue is not None:
+            self.sound_event_counter += 1
+            self.latest_sound_event = {
+                "id": self.sound_event_counter,
+                "episode_id": self.risk_episode_id,
+                "cue": cue,
+            }
+        if previous_state in risky_states and state not in risky_states:
+            self.active_risk_episode = False
 
     def _session_summary(self) -> dict[str, int]:
         return {
@@ -265,6 +315,10 @@ class DetectionEngine:
         self.truck_lost_frames = 0
         self.motion_tracks.clear()
         self.next_fallback_track_id = 1
+        self.pose_analyzer.reset()
+        self.latest_pose_observation = unavailable_observation()
+        self.last_pose_frame = -POSE_RESULT_RETENTION_FRAMES - 1
+        self.last_pose_person_key = None
 
     def _reset_yolo_tracker(self) -> None:
         predictor = getattr(self.model, "predictor", None)
@@ -361,6 +415,7 @@ class DetectionEngine:
                         safe_frames = 0
                         visible_state = "MONITORING"
                         visible_reason = "Risk tracking reset"
+                        self._reset_sound_events()
                         self.warning_reset_requested = False
                     blind_side = self.blind_side
 
@@ -423,6 +478,11 @@ class DetectionEngine:
                     primary_truck,
                     raw_evidence,
                 )
+                self._update_sound_event(previous_visible_state, visible_state)
+                selected_person = self._select_pose_person(detections, primary_truck, raw_evidence)
+                pose_observation = self._update_pose_observation(
+                    frame, selected_person, primary_truck, source_timestamp_seconds
+                )
 
                 annotated = self._draw_frame(
                     frame,
@@ -459,6 +519,8 @@ class DetectionEngine:
                             "timeline": [dict(event) for event in self.timeline_events],
                             "session_summary": self._session_summary(),
                             "session_started_at": self.session_started_at,
+                            "pedestrian_observation": pose_observation,
+                            "sound_event": dict(self.latest_sound_event) if self.latest_sound_event else None,
                         }
                     )
                     self.frame_ready.notify_all()
@@ -718,6 +780,7 @@ class DetectionEngine:
                 "expanded_margin_overlap": bool(expanded_overlap),
                 "motion_history_ready": bool(enough_history),
                 "road_user_class": item["class"],
+                "road_user_track_key": item.get("motion_track_key"),
             }
             if distance < closest_distance:
                 closest_distance = distance
@@ -756,6 +819,61 @@ class DetectionEngine:
                     else f"{label} within caution distance on the monitored side"
                 )
         return best_state, best_reason, evidence
+
+    def _select_pose_person(
+        self,
+        detections: list[dict[str, Any]],
+        primary_heavy_vehicle: dict[str, Any] | None,
+        evidence: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        people = [item for item in detections if item["class"] == "person"]
+        if not people:
+            return None
+        risk_key = evidence.get("road_user_track_key") if evidence.get("road_user_class") == "person" else None
+        if risk_key:
+            matched = next((item for item in people if item.get("motion_track_key") == risk_key), None)
+            if matched is not None:
+                return matched
+        if primary_heavy_vehicle is not None:
+            heavy_contact = np.asarray(
+                primary_heavy_vehicle.get("smoothed_contact", primary_heavy_vehicle["contact"]), dtype=np.float32
+            )
+            return min(
+                people,
+                key=lambda item: float(
+                    np.linalg.norm(
+                        np.asarray(item.get("smoothed_contact", item["contact"]), dtype=np.float32) - heavy_contact
+                    )
+                ),
+            )
+        return max(people, key=self._box_area)
+
+    def _update_pose_observation(
+        self,
+        frame: np.ndarray,
+        selected_person: dict[str, Any] | None,
+        primary_heavy_vehicle: dict[str, Any] | None,
+        timestamp_seconds: float,
+    ) -> dict[str, Any]:
+        if selected_person is None:
+            self.latest_pose_observation = unavailable_observation("No real person detection selected for pose analysis")
+            self.last_pose_person_key = None
+            return self.latest_pose_observation
+        person_key = str(selected_person.get("motion_track_key") or "selected-person")
+        selection_changed = person_key != self.last_pose_person_key
+        analysis_due = selection_changed or self.frame_number % POSE_ANALYSIS_INTERVAL_FRAMES == 0
+        if analysis_due:
+            self.latest_pose_observation = self.pose_analyzer.analyze(
+                frame,
+                selected_person,
+                primary_heavy_vehicle,
+                round(timestamp_seconds * 1000),
+            )
+            self.last_pose_frame = self.frame_number
+            self.last_pose_person_key = person_key
+        elif self.frame_number - self.last_pose_frame > POSE_RESULT_RETENTION_FRAMES:
+            self.latest_pose_observation = unavailable_observation("Pose observation expired; waiting for the next sample")
+        return dict(self.latest_pose_observation)
 
     @staticmethod
     def _state_label(state: str) -> str:
