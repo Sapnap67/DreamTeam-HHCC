@@ -61,9 +61,9 @@ The interface provides two zone modes.
 
 This is the intended deployment mode for a camera mounted on a stationary traffic-light pole. On the first frame of a fixed-camera clip, the app runs an ADE20K semantic-segmentation model to highlight **road** and **sidewalk** pixels and propose editable draft zones at their boundary. This general-scene model handles the elevated camera view better than the earlier street-level model. It downloads once on first use, so the computer needs internet access for that first analysis.
 
-The automatically detected surfaces are editable suggestions, not safety decisions. The surface editor supports any number of separate road and sidewalk polygons: select **Road surface** or **Sidewalk surface**, click a polygon's corners, choose **Finish surface**, and repeat for every separate area. Save the reviewed surface map with **Save road + sidewalks**. Surface geometry is stored in `surfaces.json` and is informational; it never triggers a warning.
+Automatically detected surfaces are hidden by default. **Preview AI surfaces** may load them into the editor as optional starting suggestions, but this does not save or activate anything. The surface editor supports any number of separate road and sidewalk polygons: select **Road surface** or **Sidewalk surface**, click a polygon's corners, choose **Finish surface**, and repeat for every separate area. Save the reviewed surface map with **Save road + sidewalks**. Surface geometry is stored in `surfaces.json` and is informational; it never triggers a warning.
 
-Review the independent zone draft, choose **Use auto zone draft** if it is useful, then adjust the three warning zones and choose **Save fixed zones**. Approved warning geometry is stored in `zones.json` and used immediately. Each warning zone needs at least three points. Recalibrate whenever the camera is moved or its view changes.
+Draw and review the three warning zones separately, then choose **Save fixed zones**. Automatic scene analysis cannot activate or save warning zones. Approved warning geometry is stored in `zones.json` and used immediately. Each warning zone needs at least three points. Recalibrate whenever the camera is moved or its view changes.
 
 ### Moving-Camera Demo
 
