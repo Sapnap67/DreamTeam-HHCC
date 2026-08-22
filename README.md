@@ -54,9 +54,23 @@ python app.py
 
 The MediaPipe model is optional. If its download fails, the real YOLO detection and warning system can still run.
 
-### macOS
+### Easy macOS startup
 
-The Python application is designed to be cross-platform, but the one-click launcher in this version targets Windows. macOS setup will be finalized separately.
+1. Download the repository ZIP and extract it, or clone it with Git.
+2. Install [Python 3.11 for macOS](https://www.python.org/downloads/macos/) if necessary.
+3. Open Terminal, type `cd ` followed by a space, drag the extracted project folder into Terminal, and press Return.
+4. Run:
+
+```bash
+chmod +x start_mac.command
+./start_mac.command
+```
+
+The first command is normally needed only once. Later, `start_mac.command` can be opened again from Terminal or, depending on macOS security settings, by double-clicking it in Finder.
+
+The macOS launcher provides the same portable setup as `start.bat`: it creates a project-local `.venv`, installs missing packages, downloads the required YOLO model, attempts the optional MediaPipe model, starts Flask, and opens <http://127.0.0.1:5000>.
+
+The first setup requires internet access and can take several minutes. Keep Terminal open while using the application and press `Control+C` to stop it. If macOS blocks the launcher, right-click `start_mac.command`, choose **Open**, and confirm once.
 
 ## Demo
 

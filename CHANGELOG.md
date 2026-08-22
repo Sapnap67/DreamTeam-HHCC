@@ -2,6 +2,18 @@
 
 This file records user-visible and safety-logic changes to the project. Update it whenever the application, detection behavior, zone geometry, warning rules, interface, dependencies, or documentation changes.
 
+## 2026-08-22 — Portable macOS Startup
+
+### Added
+
+- Added executable `start_mac.command` with project-local environment creation, supported Python selection, dependency installation, official YOLO download, optional MediaPipe download, automatic browser opening, and actionable error messages.
+
+### Changed
+
+- Replaced the temporary macOS compatibility note with complete first-run and repeat-launch instructions.
+- Kept all macOS dependencies and model files inside the project folder so setup does not rely on another teammate's computer paths.
+- Documented macOS security handling, Terminal shutdown, and offline roadshow preparation.
+
 ## 2026-08-22 — Portable Windows One-Click Startup
 
 ### Changed
