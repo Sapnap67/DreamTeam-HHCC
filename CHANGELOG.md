@@ -2,6 +2,39 @@
 
 This file records user-visible and safety-logic changes to the project. Update it whenever the application, detection behavior, zone geometry, warning rules, interface, dependencies, or documentation changes.
 
+## 2026-08-22 — Crossing-Safety Wording
+
+### Changed
+
+- Replaced `SAFE — MONITORING` with `MONITORING — NO WARNING` so the prototype does not imply that it grants permission to cross.
+- Added a persistent bilingual reminder to follow the pedestrian signal and check traffic.
+
+## 2026-08-22 — Session Safety Event Timeline
+
+### Added
+
+- Added an in-memory `SAFETY EVENT TIMELINE` that records only meaningful transitions between safe/tracked, caution, and danger states.
+- Each event includes a session-local ID, OpenCV source-video timestamp, state, reason, selected bus/truck class and confidence, vulnerable-road-user class, active backend evidence, and caution/danger persistence values.
+- Added `SESSION OBSERVATIONS` counters for distinct heavy-vehicle and vulnerable-road-user motion-track keys plus caution and danger event totals.
+- Added a local read-only `/api/session-report` JSON download containing the source filename, session start time, event totals, timeline, and prototype disclaimer.
+
+### Behavior
+
+- Timeline and observation state clear when a new video starts and when stop/reset is selected.
+- Hardware signal testing remains frontend-only and cannot create or modify timeline events.
+- Event timestamps use `cv2.CAP_PROP_POS_MSEC`, not wall-clock processing time.
+- Detection, risk thresholds, warning states, bilingual pedestrian signal, audio behavior, and visible detection drawing remain unchanged.
+
+### Validation
+
+- Processed the complete 29.57-second `597c87ba7da9a558ff93383a67213301.mp4` source through the normal YOLO processing engine.
+- Recorded 11 real state transitions rather than per-frame duplicates: Caution at `00:15.87`, Safe at `00:16.20`, Caution at `00:17.40`, Safe at `00:17.50`, Caution at `00:18.40`, Safe at `00:18.53`, Caution at `00:19.13`, Danger at `00:19.20`, Safe at `00:21.30`, Caution at `00:22.40`, and Safe at `00:22.70`.
+- Observed five caution events and one danger event; car detections remained excluded because only vulnerable-road-user classes enter risk evaluation and timeline-producing warning transitions.
+- Confirmed hardware signal testing left the event count unchanged at 11, the rendered cards matched backend event data, and stop/reset cleared all cards and counters.
+- Confirmed a second real processing session started successfully with a clean timeline.
+- Confirmed the report endpoint exactly matched `/api/status` timeline and event totals, returned a JSON attachment, and included the required disclaimer.
+- Confirmed Python compilation, local Flask routes, and the browser warning/error console completed without errors.
+
 ## 2026-08-22 — Heavy-Vehicle Warning Tuning and Signal Test
 
 ### Changed
