@@ -2,43 +2,73 @@
 
 This file records user-visible and safety-logic changes to the project. Update it whenever the application, detection behavior, zone geometry, warning rules, interface, dependencies, or documentation changes.
 
-## 2026-08-22 — Portable macOS Startup
+## 2026-08-25 — GitHub Portable Windows Release
+
+- Replaced the GitHub source snapshot with the source, documentation, tests, and packaging configuration corresponding to the newest portable Windows build.
+- Published the complete `BlindSpotGuardian-Windows-x64` one-folder distribution as a GitHub Release ZIP instead of committing its 1.18 GB generated runtime to normal Git history.
+- Added a direct latest-release download link to `README.md` and added the root `USER_MANUAL.md` for recipient startup and troubleshooting.
+- Preserved Git history and excluded generated environments, private inputs, runtime output, caches, and build artifacts from the source repository.
+- Re-ran all eight automated application tests successfully before publication.
+
+## 2026-08-24 — Isolated Windows YOLO Runtime Repair
+
+- Fixed `operator torchvision::nms does not exist` by pinning a compatible Windows pair: Torch 2.7.1 and Torchvision 0.22.1.
+- Changed `start.bat` to use only the project's local `.venv` instead of falling back to the shared `Documents\Codex\yolo-env`, preventing unrelated projects from changing BlindSpot Guardian's runtime.
+- Added a startup NMS compatibility check. If an existing local environment is incompatible, the launcher repairs it from `requirements.txt` before starting.
+- Added the same NMS compatibility gate to the separate Windows packaging build so a future executable build fails early instead of shipping an incompatible Torch/Torchvision pair.
+- Detection, tracking, risk logic, interface behavior, models, and packaged distributions were not changed.
+- Validation passed with Torch 2.7.1 CPU, Torchvision 0.22.1 CPU, MediaPipe 0.10.21, a direct `torchvision.ops.nms` call, one real YOLO model inference, all eight existing automated tests, and a source-launcher `/api/status` response of `MONITORING` with no error.
+- The previously generated Windows executable and ZIP were deliberately preserved. Rebuild the separate executable distribution to incorporate the corrected dependency pins.
+
+## 2026-08-23 — Prepared Separate macOS Application Distribution
 
 ### Added
 
-- Added executable `start_mac.command` with project-local environment creation, supported Python selection, dependency installation, official YOLO download, optional MediaPipe download, automatic browser opening, and actionable error messages.
+- Added an isolated `packaging/macos/` configuration for a native, architecture-specific PyInstaller `.app` without modifying the source application, Windows launchers, Windows packaging, models, or warning behavior.
+- Added a macOS launcher with frozen/source resource handling, `~/Library/Application Support/BlindSpotGuardian` runtime data, `~/Library/Logs/BlindSpotGuardian` diagnostics, localhost-only dynamic port selection, health readiness, browser launch, file-lock duplicate prevention, native error alerts, signal shutdown, and optional MediaPipe fallback.
+- Added an architecture-aware build script for `arm64` or `x86_64`, ad-hoc signing by default, optional Developer ID signing and Keychain-profile notarization, architecture checks, packaged self-tests, optional real-video YOLO verification, ZIP creation, and SHA-256 output.
+- Added macOS launcher tests covering frozen and source paths, Application Support and log paths, port fallback, duplicate locking, missing and bundled pose models, and health readiness.
+- Added a suitable `Info.plist`, macOS build/clean scripts, build documentation, recipient instructions, and Git exclusions for generated app, package, signing, and notarization artifacts.
 
-### Changed
+### Preservation and validation status
 
-- Replaced the temporary macOS compatibility note with complete first-run and repeat-launch instructions.
-- Kept all macOS dependencies and model files inside the project folder so setup does not rely on another teammate's computer paths.
-- Documented macOS security handling, Terminal shutdown, and offline roadshow preparation.
+- The original source files, `start.bat`, current Windows executable folder, and `BlindSpotGuardian-Windows-x64.zip` were not replaced or modified by this preparation.
+- The located source checkout does not contain `start_mac.command`; no such file was created, replaced, or modified. The previously preserved copy in the older source ZIP remains outside this checkout.
+- The packaging Python, plist, and shell scripts were syntax-tested on Windows. All eight existing application tests and all eight cross-platform macOS launcher tests passed there. The non-macOS build guard was also verified. A macOS `.app` was intentionally not built because PyInstaller cannot produce a valid Mac application from Windows.
+- Real-Mac architecture checks, signing, packaged startup, packaged YOLO inference, Gatekeeper behavior, clean-account compatibility, final ZIP size, and checksum remain pending. No macOS artifact is claimed complete.
 
-## 2026-08-22 — Portable Windows One-Click Startup
-
-### Changed
-
-- Removed the launcher dependency on the original developer's hard-coded Codex Python environment.
-- Reworked `start.bat` to locate a supported Python 3.10–3.12 installation, prefer Python 3.11, and create a project-local `.venv`.
-- Added dependency health checks so packages are installed only when the local environment is missing or incomplete.
-- Added automatic first-run download and verification of the required official `yolo11n.pt` weights.
-- Added an automatic best-effort MediaPipe model download while preserving YOLO-only operation if the optional pose model is unavailable.
-- Added clearer numbered startup progress and actionable Python, setup, model-download, and application error messages.
-- Simplified the README to make Windows setup a three-step process and documented recovery for an incomplete `.venv`.
+## 2026-08-23 — Additional Portable Windows Executable Distribution
 
 ### Added
 
-- Added `download_yolo_model.py` as a reusable, project-relative official-model downloader.
+- Added a separate PyInstaller one-folder packaging system under `packaging/windows/`; it does not replace or modify the Flask source application or its existing launchers.
+- Added a native Windows launcher that prevents duplicate instances, selects an available localhost port beginning at 5000, binds only to `127.0.0.1`, waits for `/api/status`, opens the default browser, and writes rotating diagnostics under `%LOCALAPPDATA%\BlindSpotGuardian\logs`.
+- Redirected packaged uploads, output, and runtime state to `%LOCALAPPDATA%\BlindSpotGuardian` without changing normal `python app.py` or `start.bat` path behavior.
+- Added frozen and non-frozen resource-path tests, packaged health/self-test modes, optional-MediaPipe fallback verification, repeated-start verification, spaces-in-path verification, and packaged real-video YOLO verification support.
+- Added `THIRD_PARTY_NOTICES.md`, `BUILDING_WINDOWS.md`, pinned PyInstaller build automation, cleanup automation, final ZIP creation, and SHA-256 reporting.
 
-## 2026-08-22 — Cross-Platform Setup Documentation
+### Fixed
 
-### Changed
+- Changed repeat executable launches to reopen the browser for the already-running local server instead of displaying an `already running` error after its browser tab was closed.
+- Added a runtime port record under `%LOCALAPPDATA%\BlindSpotGuardian`; it is validated through the real `/api/status` endpoint and removed when the owning launcher exits.
+- Made packaged real-video verification tolerate the brief Windows/OpenCV file-release delay when cleaning its copied test video.
 
-- Corrected the README to state that YOLO and MediaPipe model files are excluded from Git rather than bundled in the repository.
-- Added complete Windows and macOS setup commands, including official YOLO and optional MediaPipe model downloads.
-- Recommended Python 3.11 for predictable dependency compatibility and explained offline roadshow preparation.
-- Clarified that `start.bat` is Windows-only and requires `yolo11n.pt` to be downloaded before detection can start.
-- Updated the project introduction to describe all-vehicle pairwise risk evaluation while retaining the large-vehicle blind-spot focus.
+### Distribution policy
+
+- The additional artifact is named `BlindSpotGuardian-Windows-x64.zip` and is generated only under `dist/` alongside the one-folder executable distribution.
+- Generated build environments, executables, build folders, and distribution ZIPs are ignored by Git.
+- The existing source application, `start.bat`, model files, configurations, and prior `BlindSpot-Guardian-Win&Mac.zip` remain untouched. The located source checkout does not contain `start_mac.command`; the existing copy inside the prior portable ZIP was not modified.
+
+### Validation
+
+- Passed all eight application tests and all six frozen/non-frozen launcher path and repeat-launch tests in the isolated Python 3.12 build environment.
+- Passed direct launcher health self-tests with MediaPipe enabled and with the optional pose integration disabled, including the source-resource import path used by packaging development.
+- Built the one-folder Windows x64 distribution successfully with PyInstaller `6.16.0`; it contains 3,945 files and is approximately 1.2 GB extracted.
+- Confirmed that the bundled-resource tree contains both `yolo11n.pt` and the optional `pose_landmarker_lite.task`, templates, static assets, Python, PyTorch, OpenCV, MediaPipe, and required runtime libraries.
+- Verified packaged executable startup and repeat launching: the second launch exited successfully, retained exactly one server process, and reopened the existing `127.0.0.1` session instead of reporting an error.
+- Verified the final packaged executable with the 29.57-second source video: bundled YOLO produced processed frames and the verification exited successfully. OpenCV retained the packaging-only test copy until process exit; it was then removed during validation.
+- A clean Windows Sandbox executable was unavailable, so clean-machine compatibility remains unverified and is not claimed.
+- Verified the original source server separately: `python app.py` bound to `127.0.0.1:5000` and `/api/status` returned `MONITORING`.
 
 ## 2026-08-22 — All-Vehicle Pairwise Collision-Risk Evaluation
 
@@ -331,4 +361,3 @@ This file records user-visible and safety-logic changes to the project. Update i
 - Confirmed zones were never generated without a real truck detection.
 - Confirmed the application fell back to largest-truck selection when real YOLO tracking IDs were unavailable.
 - Confirmed browser requests completed successfully without Python errors.
-

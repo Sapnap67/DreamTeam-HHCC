@@ -29,4 +29,3 @@ class SoundUnittestAdapter(unittest.TestCase):
     def test_sound_deduplication(self):
         test_sound_once_per_risk_episode()
         test_new_episode_can_emit_new_caution_chime()
-

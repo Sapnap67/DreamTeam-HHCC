@@ -4,6 +4,17 @@ __pycache__/
 .venv/
 venv/
 env/
+build/
+dist/
+*.exe
+*.spec.bak
+*.app/
+*.dmg
+*.pkg
+*.p12
+*.cer
+*.mobileprovision
+notarization-*
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
@@ -31,4 +42,3 @@ output/*
 .idea/
 .DS_Store
 Thumbs.db
-

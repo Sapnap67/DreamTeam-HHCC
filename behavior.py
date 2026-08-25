@@ -209,4 +209,3 @@ class PoseBehaviorAnalyzer:
             result.update({"available": self.available, "status": "No reliable pose", "person_track_key": person.get("motion_track_key")})
             result["mediapipe_ms"] = round((time.perf_counter() - started) * 1000.0, 1)
             return result
-

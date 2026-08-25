@@ -1,6 +1,6 @@
 # BlindSpot Guardian
 
-BlindSpot Guardian is a 36-hour HHCC 2026 prototype for exploring vehicle and vulnerable-road-user proximity in traffic video, with particular attention to large-vehicle blind spots. It applies real YOLO detections and an image-space motion heuristic to show an understandable potential-collision-risk warning.
+BlindSpot Guardian is a 36-hour HHCC 2026 prototype for exploring truck and road-user proximity in traffic video. It applies real YOLO detections and an image-space motion heuristic to show an understandable potential-collision-risk warning.
 
 > **Prototype only — not for road use.** This is a prototype image-space proximity and motion heuristic, not accurate crash prediction or a certified safety system.
 
@@ -16,61 +16,70 @@ BlindSpot Guardian is a 36-hour HHCC 2026 prototype for exploring vehicle and vu
 
 ## Setup
 
-Use **64-bit Python 3.11** for the most predictable Windows compatibility. Model files are downloaded on the first setup and ignored by Git.
+### Portable Windows executable
+
+For the separate Windows 10/11 64-bit distribution:
+
+1. Download [`BlindSpotGuardian-Windows-x64.zip`](https://github.com/Sapnap67/DreamTeam-HHCC/releases/latest/download/BlindSpotGuardian-Windows-x64.zip) from the latest GitHub Release.
+2. Right-click it and choose **Extract All**. Do not run the program from inside the ZIP.
+3. Open the extracted `BlindSpotGuardian-Windows-x64` folder and double-click `BlindSpotGuardian.exe`.
+4. Closing the browser tab does not stop the local analysis server. Double-click `BlindSpotGuardian.exe` again to reopen the existing session; it will not start a duplicate server.
+
+Python, pip, Git, PowerShell, and administrator access are not required on the recipient computer. The first start may take longer while Windows checks the bundled executable and loads the local AI runtimes. A modern 64-bit CPU and several gigabytes of available RAM are recommended; GPU acceleration is not required by this CPU-configured prototype.
+
+The one-folder distribution is intentionally much larger than the source ZIP because it includes Python, PyTorch, YOLO, OpenCV, MediaPipe, and their DLLs. The current extracted build is approximately 1.2 GB; the compressed download is smaller. See `THIRD_PARTY_NOTICES.md` for model and dependency licensing. Compatibility targets Windows 10/11 x64 but is not guaranteed for every computer or security policy. The executable is not code-signed, so organization-managed Windows Application Control or antivirus policies may warn about or block it until an administrator approves the build.
+
+The portable executable is an additional distribution. The source launch methods below remain supported and are not replaced.
+
+### Packaged macOS application
+
+The prepared macOS packaging creates a third, separate distribution and does not replace the source version or Windows executable. A valid app must be built on a real Mac for its native architecture:
+
+- Apple Silicon: `BlindSpotGuardian-macOS-arm64.zip`
+- Intel: `BlindSpotGuardian-macOS-x86_64.zip`
+
+Recipient instructions after a real Mac build:
+
+1. Download the ZIP matching the Mac architecture.
+2. Extract it completely.
+3. On first launch, right-click `BlindSpotGuardian.app` and select **Open**.
+4. Keep the application running while using the browser interface.
+
+The app bundles Python and its required dependencies, opens the browser automatically, and stores runtime data under `~/Library/Application Support/BlindSpotGuardian`. Logs are stored under `~/Library/Logs/BlindSpotGuardian`. No Terminal commands, Python installation, pip, Git, or Codex are required on the recipient Mac.
+
+The current configuration uses ad-hoc signing unless a Developer ID identity is explicitly supplied. It is not notarized by default, so Gatekeeper may show a warning. A macOS artifact is not currently included because it must still be built and tested on a real Mac. See `packaging/macos/README_MAC_BUILD.md`.
+
+Python 3.10 or newer is recommended.
 
 ### Easy Windows startup
 
-1. Download the repository as a ZIP and extract it, or clone it with Git.
-2. Install [Python 3.11](https://www.python.org/downloads/) if necessary. During installation, enable **Add python.exe to PATH**.
-3. Double-click `start.bat`.
+Double-click `start.bat`. Its first run creates an isolated project-local `.venv`, installs the compatible versions in `requirements.txt`, validates Torchvision NMS, and then starts the application. It does not reuse a shared YOLO environment, so dependency changes in another project cannot break BlindSpot Guardian. It also opens <http://127.0.0.1:5000> automatically.
 
-The portable launcher uses a private `.venv` inside the project and does not depend on environments or paths from the original developer's computer. On its first run it will:
+Keep the command window open while using BlindSpot Guardian. Press `Ctrl+C` in that window to stop it.
 
-- select Python 3.11, 3.12, or 3.10;
-- create the local environment;
-- install the packages in `requirements.txt`;
-- download the required official `yolo11n.pt` model;
-- attempt to download the optional MediaPipe Pose Landmarker model;
-- start Flask and open <http://127.0.0.1:5000>.
+To enable the optional pedestrian-observation card, double-click `download_pose_model.bat` once. It downloads the official MediaPipe Pose Landmarker Lite task file over HTTPS into the ignored local `models` folder. If MediaPipe or the model is missing, the interface says it is unavailable and the YOLO warning system keeps working.
 
-The first setup requires internet access and can take several minutes. Keep the command window open. Later starts reuse the environment and downloaded models and should be much faster. Press `Ctrl+C` in the command window to stop the server.
-
-If setup fails, read the final message rather than closing the window. Check the internet connection and confirm that Python is a supported 64-bit version. If the local environment became incomplete, delete **only** the project's `.venv` folder and double-click `start.bat` again.
-
-### Manual Windows startup
+### Windows (PowerShell)
 
 ```powershell
-cd "path\to\DreamTeam-HHCC"
-
-py -3.11 -m venv .venv
+cd "path\to\blindspot-guardian"
+py -m venv .venv
 .\.venv\Scripts\Activate.ps1
-
-python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
-python download_yolo_model.py
-python download_pose_model.py
 python app.py
 ```
 
-The MediaPipe model is optional. If its download fails, the real YOLO detection and warning system can still run.
-
-### Easy macOS startup
-
-1. Download the repository ZIP and extract it, or clone it with Git.
-2. Install [Python 3.11 for macOS](https://www.python.org/downloads/macos/) if necessary.
-3. Open Terminal, type `cd ` followed by a space, drag the extracted project folder into Terminal, and press Return.
-4. Run:
+### macOS (Terminal)
 
 ```bash
-chmod +x start_mac.command
-./start_mac.command
+cd "/path/to/blindspot-guardian"
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install -r requirements.txt
+python app.py
 ```
 
-The first command is normally needed only once. Later, `start_mac.command` can be opened again from Terminal or, depending on macOS security settings, by double-clicking it in Finder.
-
-The macOS launcher provides the same portable setup as `start.bat`: it creates a project-local `.venv`, installs missing packages, downloads the required YOLO model, attempts the optional MediaPipe model, starts Flask, and opens <http://127.0.0.1:5000>.
-
-The first setup requires internet access and can take several minutes. Keep Terminal open while using the application and press `Control+C` to stop it. If macOS blocks the launcher, right-click `start_mac.command`, choose **Open**, and confirm once.
+Open <http://127.0.0.1:5000>. Press `Ctrl+C` to stop. The included `yolo11n.pt` is used by default. If the model is elsewhere, set `YOLO_MODEL_PATH` to its full path before running the app.
 
 ## Demo
 
@@ -105,4 +114,3 @@ AI assisted with documentation, code generation, debugging, and explanation. The
 
 Dream Team — HHCC 2026 Prototype Development Track  
 Theme: **AI Reshaping the Automotive Industry**
-

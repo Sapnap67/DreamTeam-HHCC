@@ -16,4 +16,3 @@ if errorlevel 1 (
 echo.
 echo Pose model is ready.
 pause
-

@@ -36,4 +36,3 @@ class BehaviorUnittestAdapter(unittest.TestCase):
         test_activity_needs_multiple_frames()
         test_activity_classifies_standing_and_walking()
         test_orientation_is_always_low_confidence_or_unknown()
-

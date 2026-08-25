@@ -8,4 +8,3 @@ BlindSpot Guardian uses two local computer-vision components:
 The system does not infer pedestrian awareness, intent, real-world speed or distance, driver intention, collision probability, or a calibrated trajectory. If MediaPipe or its model is unavailable, YOLO processing and the warning heuristic continue normally.
 
 No cloud AI service, camera access, remote inference, or uploaded-data service is used by the application. Video processing occurs on the computer running the Flask server.
-

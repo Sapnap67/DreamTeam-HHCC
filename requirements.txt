@@ -3,4 +3,5 @@ ultralytics==8.4.126
 opencv-python>=4.10
 numpy>=1.26,<2.0
 mediapipe==0.10.21
-
+torch==2.7.1; platform_system == "Windows"
+torchvision==0.22.1; platform_system == "Windows"
